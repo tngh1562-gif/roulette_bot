@@ -109,7 +109,6 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
 @bot.event
 async def on_ready():
     guild = discord.Object(id=1428066375334756354)
-    tree.clear_commands(guild=guild)
     await tree.sync(guild=guild)
     synced = await tree.sync(guild=guild)
     print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
