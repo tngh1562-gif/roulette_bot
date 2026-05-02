@@ -254,6 +254,23 @@ async def add_user(interaction: discord.Interaction, 닉네임: str, 스레드id
     save_config(cfg)
     await interaction.response.send_message(f"✅ `{닉네임}` 추가 완료", ephemeral=True)
 
+# ── /유저삭제 ──────────────────────────────────────────────
+@tree.command(name="유저삭제", description="유저를 config에서 삭제합니다.")
+@app_commands.describe(닉네임="삭제할 유저 닉네임")
+async def delete_user(interaction: discord.Interaction, 닉네임: str):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    cfg = load_config()
+    users = cfg.get("users", [])
+    target = next((u for u in users if u["name"] == 닉네임), None)
+    if not target:
+        await interaction.response.send_message(f"유저 `{닉네임}` 를 찾을 수 없습니다.", ephemeral=True)
+        return
+    users.remove(target)
+    save_config(cfg)
+    await interaction.response.send_message(f"✅ `{닉네임}` 삭제 완료", ephemeral=True)
+
 # ── /자동등록 ──────────────────────────────────────────────
 FORUM_CHANNEL_ID = 1491054022877253642
 
