@@ -109,10 +109,14 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
 @bot.event
 async def on_ready():
     guild = discord.Object(id=1428066375334756354)
-    await tree.sync(guild=guild)
-    synced = await tree.sync(guild=guild)
-    print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
-    print(f"슬래시 명령어 동기화 완료: {len(synced)}개")
+    try:
+        synced = await tree.sync(guild=guild)
+        print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
+        print(f"슬래시 명령어 동기화 완료: {len(synced)}개")
+        for cmd in synced:
+            print(f"  - /{cmd.name}")
+    except Exception as e:
+        print(f"명령어 동기화 실패: {e}")
 
 @bot.event
 async def on_message(message):
