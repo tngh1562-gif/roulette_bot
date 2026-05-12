@@ -199,7 +199,7 @@ async def edit_reward(interaction: discord.Interaction, 닉네임: str, 보상�
     cfg = load_config()
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
     if not target:
-        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다.", ephemeral=True)
+        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요.", ephemeral=True)
         return
     all_rewards = (
         target.get("rewards", cfg.get("rewards", [])) +
@@ -244,10 +244,27 @@ async def show_reward(interaction: discord.Interaction, 닉네임: str):
     cfg = load_config()
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
     if not target:
-        await interaction.response.send_message(f"유저 `{닉네임}` 를 찾을 수 없습니다.", ephemeral=True)
+        await interaction.response.send_message(f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요.", ephemeral=True)
         return
     embed = build_embed(target, cfg)
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ── /유저목록 ──────────────────────────────────────────────
+@tree.command(name="유저목록", description="config에 등록된 유저 닉네임 목록을 확인합니다.")
+async def list_users(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    cfg = load_config()
+    users = cfg.get("users", [])
+    if not users:
+        await interaction.response.send_message("등록된 유저가 없습니다.", ephemeral=True)
+        return
+    names = [u.get("name", "?") for u in users]
+    text = "\n".join(f"• {name}" for name in names)
+    if len(text) > 1800:
+        text = text[:1800] + "\n...목록이 길어서 일부만 표시했습니다."
+    await interaction.response.send_message(f"**등록된 유저 {len(names)}명**\n{text}", ephemeral=True)
 
 # ── /유저추가 ──────────────────────────────────────────────
 @tree.command(name="유저추가", description="새 유저를 config에 추가합니다.")
@@ -282,7 +299,7 @@ async def delete_user(interaction: discord.Interaction, 닉네임: str):
     users = cfg.get("users", [])
     target = next((u for u in users if u["name"] == 닉네임), None)
     if not target:
-        await interaction.response.send_message(f"유저 `{닉네임}` 를 찾을 수 없습니다.", ephemeral=True)
+        await interaction.response.send_message(f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요.", ephemeral=True)
         return
     users.remove(target)
     save_config(cfg)
@@ -488,7 +505,7 @@ async def user_add_reward(interaction: discord.Interaction, 닉네임: str, 항�
     cfg = load_config()
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
     if not target:
-        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다.", ephemeral=True)
+        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요.", ephemeral=True)
         return
     if 섹션 not in target:
         target[섹션] = list(cfg.get(섹션, []))
@@ -519,7 +536,7 @@ async def user_delete_reward(interaction: discord.Interaction, 닉네임: str, �
     cfg = load_config()
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
     if not target:
-        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다.", ephemeral=True)
+        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요.", ephemeral=True)
         return
     if 섹션 not in target:
         target[섹션] = list(cfg.get(섹션, []))
