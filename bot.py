@@ -106,15 +106,27 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
         return f"전송 실패: {e}"
 
 # ── 이벤트 ───────────────────────────────────────────────
+command_sync_done = False
+
 @bot.event
 async def on_ready():
+    global command_sync_done
+    if command_sync_done:
+        print(f"봇 재연결: {bot.user} (명령어 동기화 건너뜀)")
+        return
     guild = discord.Object(id=1428066375334756354)
     try:
         tree.clear_commands(guild=guild)
+        deleted = await tree.sync(guild=guild)
         tree.copy_global_to(guild=guild)
         synced = await tree.sync(guild=guild)
+        tree.clear_commands(guild=None)
+        global_deleted = await tree.sync()
         print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
+        print(f"기존 서버 명령어 삭제 완료: {len(deleted)}개")
         print(f"슬래시 명령어 강제 동기화 완료: {len(synced)}개")
+        print(f"전역 명령어 삭제 요청 완료: {len(global_deleted)}개")
+        command_sync_done = True
         for cmd in synced:
             print(f"  - /{cmd.name}")
     except Exception as e:
