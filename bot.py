@@ -368,6 +368,67 @@ async def add_reward(interaction: discord.Interaction, 항목이름: str, 섹션
         f"✅ `{section_name}` 에 `{항목이름}` 추가 완료\n" + "\n".join(lines), ephemeral=True,
     )
 
+# ── /일괄추가 ──────────────────────────────────────────────
+@tree.command(name="일괄추가", description="위플랩 룰렛 목록 복사 내용을 읽어 보상을 한 번에 추가합니다.")
+@app_commands.describe(내용="위플랩 룰렛후원목록에서 복사한 텍스트를 그대로 붙여넣으세요.")
+async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    cfg = load_config()
+    users = cfg.get("users", [])
+    if not users:
+        await interaction.followup.send("등록된 유저가 없습니다.", ephemeral=True)
+        return
+
+    users_by_name = sorted(users, key=lambda u: len(u.get("name", "")), reverse=True)
+    added = {}
+    current_user = None
+
+    for raw_line in 내용.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        matched_user = next((u for u in users_by_name if u.get("name") and u["name"] in line), None)
+        if matched_user:
+            current_user = matched_user
+
+        if not current_user:
+            continue
+
+        available_rewards = list(dict.fromkeys(
+            current_user.get("rewards", cfg.get("rewards", [])) +
+            current_user.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
+        ))
+        for reward in sorted(available_rewards, key=len, reverse=True):
+            count = line.count(reward)
+            if count <= 0:
+                continue
+            current_user.setdefault("counts", {})[reward] = current_user.setdefault("counts", {}).get(reward, 0) + count
+            added.setdefault(current_user["name"], {})[reward] = added.setdefault(current_user["name"], {}).get(reward, 0) + count
+
+    if not added:
+        await interaction.followup.send(
+            "추가할 보상을 찾지 못했습니다.\n위플랩 표에서 이름과 룰렛 보상명이 같이 포함되도록 복사해서 붙여넣어 주세요.",
+            ephemeral=True,
+        )
+        return
+
+    save_config(cfg)
+    lines = []
+    for user_name, rewards in added.items():
+        target = next(u for u in users if u["name"] == user_name)
+        result = await update_post_message(target, cfg)
+        reward_text = ", ".join(f"{name} +{count}" for name, count in rewards.items())
+        lines.append(f"• {user_name}: {reward_text} — {result}")
+
+    summary = "\n".join(lines)
+    if len(summary) > 1800:
+        summary = summary[:1800] + "\n...결과가 길어서 일부만 표시했습니다."
+    await interaction.followup.send("**일괄 추가 완료**\n" + summary, ephemeral=True)
+
 # ── /보상항목삭제 ──────────────────────────────────────────
 @tree.command(name="보상항목삭제", description="보상 항목을 삭제하고 전체 유저 메시지를 업데이트합니다.")
 @app_commands.describe(항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
