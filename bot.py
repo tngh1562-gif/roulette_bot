@@ -259,7 +259,7 @@ async def add_user(interaction: discord.Interaction, 닉네임: str, 스레드id
     cfg = load_config()
     users = cfg.setdefault("users", [])
     if any(u["name"] == 닉네임 for u in users):
-        await interaction.response.send_message(f"이미 존재하는 유저입니다: `{닉네임}`", ephemeral=True)
+        await interaction.response.send_message(f"이미 존재하는 유저입니다: `{닉네임}`\n스레드 ID가 바뀐 경우 `/유저삭제 닉네임:{닉네임}` 후 다시 `/유저추가` 해주세요.", ephemeral=True)
         return
     new_user = {
         "name": 닉네임,
@@ -272,8 +272,8 @@ async def add_user(interaction: discord.Interaction, 닉네임: str, 스레드id
     await interaction.response.send_message(f"✅ `{닉네임}` 추가 완료", ephemeral=True)
 
 # ── /유저삭제 ──────────────────────────────────────────────
-@tree.command(name="유저삭제", description="유저를 config에서 삭제합니다.")
-@app_commands.describe(닉네임="삭제할 유저 닉네임")
+@tree.command(name="유저삭제", description="닉네임 기준으로 기존 유저를 config에서 삭제합니다.")
+@app_commands.describe(닉네임="삭제할 유저 닉네임 (스레드 ID가 달라도 닉네임으로 삭제)")
 async def delete_user(interaction: discord.Interaction, 닉네임: str):
     if not is_admin(interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
