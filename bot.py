@@ -188,31 +188,69 @@ async def on_message(message):
 def is_admin(interaction: discord.Interaction) -> bool:
     return interaction.user.guild_permissions.administrator
 
-# ── /차감 ─────────────────────────────────────────────
-@tree.command(name="차감", description="특정 유저의 보상 개수를 수정하고 포스트 메시지를 업데이트합니다.")
-@app_commands.describe(닉네임="수정할 유저 닉네임", 보상이름="수정할 보상 항목 이름", 개수="변경할 개수")
-async def edit_reward(interaction: discord.Interaction, 닉네임: str, 보상이름: str, 개수: int):
-    if not is_admin(interaction):
-        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
-        return
-    await interaction.response.defer(ephemeral=True)
-    cfg = load_config()
+def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
     if not target:
-        await interaction.followup.send(f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요.", ephemeral=True)
-        return
+        return None, f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요."
     all_rewards = (
         target.get("rewards", cfg.get("rewards", [])) +
         target.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
     )
     if 보상이름 not in all_rewards:
-        await interaction.followup.send(f"보상 항목 `{보상이름}` 이 존재하지 않습니다.", ephemeral=True)
+        return None, f"보상 항목 `{보상이름}` 이 존재하지 않습니다."
+    return target, None
+
+# ── /차감 ─────────────────────────────────────────────
+@tree.command(name="차감", description="특정 유저의 보상 개수를 차감하고 포스트 메시지를 업데이트합니다.")
+@app_commands.describe(닉네임="차감할 유저 닉네임", 보상이름="차감할 보상 항목 이름", 개수="차감할 개수")
+async def subtract_reward(interaction: discord.Interaction, 닉네임: str, 보상이름: str, 개수: int):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
-    target.setdefault("counts", {})[보상이름] = 개수
+    if 개수 <= 0:
+        await interaction.response.send_message("개수는 1 이상이어야 합니다.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    cfg = load_config()
+    target, error = find_user_reward(cfg, 닉네임, 보상이름)
+    if error:
+        await interaction.followup.send(error, ephemeral=True)
+        return
+    counts = target.setdefault("counts", {})
+    before = counts.get(보상이름, 0)
+    after = max(0, before - 개수)
+    counts[보상이름] = after
     save_config(cfg)
     result = await update_post_message(target, cfg)
     await interaction.followup.send(
-        f"✅ `{닉네임}` 의 `{보상이름}` → **{개수}개** 로 변경\n포스트 메시지: {result}",
+        f"✅ `{닉네임}` 의 `{보상이름}` **{before}개 → {after}개** ({개수}개 차감)\n포스트 메시지: {result}",
+        ephemeral=True,
+    )
+
+# ── /추가 ─────────────────────────────────────────────
+@tree.command(name="추가", description="특정 유저의 보상 개수를 추가하고 포스트 메시지를 업데이트합니다.")
+@app_commands.describe(닉네임="추가할 유저 닉네임", 보상이름="추가할 보상 항목 이름", 개수="추가할 개수")
+async def add_reward_count(interaction: discord.Interaction, 닉네임: str, 보상이름: str, 개수: int):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    if 개수 <= 0:
+        await interaction.response.send_message("개수는 1 이상이어야 합니다.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    cfg = load_config()
+    target, error = find_user_reward(cfg, 닉네임, 보상이름)
+    if error:
+        await interaction.followup.send(error, ephemeral=True)
+        return
+    counts = target.setdefault("counts", {})
+    before = counts.get(보상이름, 0)
+    after = before + 개수
+    counts[보상이름] = after
+    save_config(cfg)
+    result = await update_post_message(target, cfg)
+    await interaction.followup.send(
+        f"✅ `{닉네임}` 의 `{보상이름}` **{before}개 → {after}개** ({개수}개 추가)\n포스트 메시지: {result}",
         ephemeral=True,
     )
 
@@ -355,8 +393,8 @@ async def auto_register(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-# ── /추가 ──────────────────────────────────────────────
-@tree.command(name="추가", description="룰렛보상 또는 후원보상 섹션에 항목을 추가합니다.")
+# ── /보상항목추가 ──────────────────────────────────────────────
+@tree.command(name="보상항목추가", description="룰렛보상 또는 후원보상 섹션에 항목을 추가합니다.")
 @app_commands.describe(항목이름="추가할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
