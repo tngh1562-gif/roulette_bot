@@ -174,8 +174,8 @@ async def on_message(message):
 def is_admin(interaction: discord.Interaction) -> bool:
     return interaction.user.guild_permissions.administrator
 
-# ── /보상수정 ─────────────────────────────────────────────
-@tree.command(name="보상수정", description="특정 유저의 보상 개수를 수정하고 포스트 메시지를 업데이트합니다.")
+# ── /차감 ─────────────────────────────────────────────
+@tree.command(name="차감", description="특정 유저의 보상 개수를 수정하고 포스트 메시지를 업데이트합니다.")
 @app_commands.describe(닉네임="수정할 유저 닉네임", 보상이름="수정할 보상 항목 이름", 개수="변경할 개수")
 async def edit_reward(interaction: discord.Interaction, 닉네임: str, 보상이름: str, 개수: int):
     if not is_admin(interaction):
@@ -324,8 +324,8 @@ async def auto_register(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-# ── /보상추가 ──────────────────────────────────────────────
-@tree.command(name="보상추가", description="룰렛보상 또는 후원보상 섹션에 항목을 추가합니다.")
+# ── /추가 ──────────────────────────────────────────────
+@tree.command(name="추가", description="룰렛보상 또는 후원보상 섹션에 항목을 추가합니다.")
 @app_commands.describe(항목이름="추가할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
