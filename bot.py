@@ -384,30 +384,43 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
 
     users_by_name = sorted(users, key=lambda u: len(u.get("name", "")), reverse=True)
     added = {}
-    current_user = None
+    record_starts = {"치즈", "구독"}
+    blocks = []
+    current_block = []
 
     for raw_line in 내용.splitlines():
         line = raw_line.strip()
         if not line:
             continue
+        if line in record_starts and current_block:
+            blocks.append(current_block)
+            current_block = [line]
+        else:
+            current_block.append(line)
+    if current_block:
+        blocks.append(current_block)
 
-        matched_user = next((u for u in users_by_name if u.get("name") and u["name"] in line), None)
-        if matched_user:
-            current_user = matched_user
-
-        if not current_user:
+    for block in blocks:
+        matched_user = next(
+            (u for u in users_by_name if u.get("name") and any(line == u["name"] for line in block)),
+            None,
+        )
+        if not matched_user:
             continue
 
         available_rewards = list(dict.fromkeys(
-            current_user.get("rewards", cfg.get("rewards", [])) +
-            current_user.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
+            matched_user.get("rewards", cfg.get("rewards", [])) +
+            matched_user.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
         ))
-        for reward in sorted(available_rewards, key=len, reverse=True):
-            count = line.count(reward)
-            if count <= 0:
+        for line in block:
+            if not line.startswith("("):
                 continue
-            current_user.setdefault("counts", {})[reward] = current_user.setdefault("counts", {}).get(reward, 0) + count
-            added.setdefault(current_user["name"], {})[reward] = added.setdefault(current_user["name"], {}).get(reward, 0) + count
+            for reward in sorted(available_rewards, key=len, reverse=True):
+                count = line.count(reward)
+                if count <= 0:
+                    continue
+                matched_user.setdefault("counts", {})[reward] = matched_user.setdefault("counts", {}).get(reward, 0) + count
+                added.setdefault(matched_user["name"], {})[reward] = added.setdefault(matched_user["name"], {}).get(reward, 0) + count
 
     if not added:
         await interaction.followup.send(
