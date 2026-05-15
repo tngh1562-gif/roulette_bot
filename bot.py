@@ -414,20 +414,18 @@ async def auto_register(interaction: discord.Interaction):
     )
 
 # ── /보상항목추가 ──────────────────────────────────────────────
-@tree.command(name="보상항목추가", description="룰렛보상 또는 후원보상 섹션에 항목을 전체 추가합니다.")
-@app_commands.describe(항목이름="추가할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
+@tree.command(name="보상항목추가", description="룰렛보상, 후원보상, 내전보상 섹션에 항목을 추가합니다.")
+@app_commands.describe(항목이름="추가할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
     app_commands.Choice(name="후원보상", value="sponsor_rewards"),
+    app_commands.Choice(name="내전보상", value="war_rewards"),
 ])
 async def add_reward(interaction: discord.Interaction, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
-    if 섹션 == "war_rewards":
-        await interaction.followup.send("내전보상은 전체 적용하지 않습니다. `/섹션추가` 또는 `/개별추가`로 유저별 추가해 주세요.", ephemeral=True)
-        return
     cfg = load_config()
     reward_list = cfg.setdefault(섹션, [])
     if 항목이름 in reward_list:
@@ -523,19 +521,17 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
 
 # ── /보상항목삭제 ──────────────────────────────────────────
 @tree.command(name="보상항목삭제", description="보상 항목을 삭제하고 전체 유저 메시지를 업데이트합니다.")
-@app_commands.describe(항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
+@app_commands.describe(항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
     app_commands.Choice(name="후원보상", value="sponsor_rewards"),
+    app_commands.Choice(name="내전보상", value="war_rewards"),
 ])
 async def delete_reward(interaction: discord.Interaction, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
-    if 섹션 == "war_rewards":
-        await interaction.followup.send("내전보상은 전체 삭제하지 않습니다. `/개별삭제` 또는 `/섹션삭제`로 유저별 삭제해 주세요.", ephemeral=True)
-        return
     cfg = load_config()
     reward_list = cfg.get(섹션, [])
     if 항목이름 not in reward_list:
@@ -604,7 +600,15 @@ async def section_add_reward(interaction: discord.Interaction, 닉네임: str, �
     await add_user_reward_to_section(interaction, 닉네임, 항목이름, 섹션)
 
 
-async def delete_user_reward_from_section(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str):
+# ── /개별삭제 ──────────────────────────────────────────────
+@tree.command(name="개별삭제", description="특정 유저에게만 보상 항목을 삭제합니다.")
+@app_commands.describe(닉네임="삭제할 유저 닉네임", 항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
+@app_commands.choices(섹션=[
+    app_commands.Choice(name="룰렛보상", value="rewards"),
+    app_commands.Choice(name="후원보상", value="sponsor_rewards"),
+    app_commands.Choice(name="내전보상", value="war_rewards"),
+])
+async def user_delete_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
@@ -627,30 +631,6 @@ async def delete_user_reward_from_section(interaction: discord.Interaction, 닉�
     await interaction.followup.send(
         f"✅ `{닉네임}` 의 `{section_name}` 에서 `{항목이름}` 삭제 완료\n포스트: {result}", ephemeral=True,
     )
-
-
-# ── /개별삭제 ──────────────────────────────────────────────
-@tree.command(name="개별삭제", description="특정 유저에게만 보상 항목을 삭제합니다.")
-@app_commands.describe(닉네임="삭제할 유저 닉네임", 항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
-@app_commands.choices(섹션=[
-    app_commands.Choice(name="룰렛보상", value="rewards"),
-    app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
-])
-async def user_delete_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
-    await delete_user_reward_from_section(interaction, 닉네임, 항목이름, 섹션)
-
-
-# ── /섹션삭제 ──────────────────────────────────────────────
-@tree.command(name="섹션삭제", description="특정 유저의 선택한 섹션에서 보상 항목을 삭제합니다.")
-@app_commands.describe(닉네임="삭제할 유저 닉네임", 항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
-@app_commands.choices(섹션=[
-    app_commands.Choice(name="룰렛보상", value="rewards"),
-    app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
-])
-async def section_delete_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
-    await delete_user_reward_from_section(interaction, 닉네임, 항목이름, 섹션)
 
 # ── 음악 컨트롤 버튼 View ────────────────────────────────
 class MusicControlView(discord.ui.View):
