@@ -4,20 +4,43 @@ from discord import app_commands
 import json
 import os
 import asyncio
+import shutil
 import yt_dlp
 from gtts import gTTS
 import tempfile
 
 # ── config 로드 ──────────────────────────────────────────
-CONFIG_PATH = "config.json"
+DEFAULT_CONFIG_PATH = "config.json"
+CONFIG_PATH = os.getenv("CONFIG_PATH", DEFAULT_CONFIG_PATH)
+CONFIG_BACKUP_PATH = os.getenv("CONFIG_BACKUP_PATH", f"{CONFIG_PATH}.bak")
+
+def ensure_config_file():
+    config_dir = os.path.dirname(CONFIG_PATH)
+    if config_dir:
+        os.makedirs(config_dir, exist_ok=True)
+    if os.path.exists(CONFIG_PATH):
+        return
+    if CONFIG_PATH != DEFAULT_CONFIG_PATH and os.path.exists(DEFAULT_CONFIG_PATH):
+        shutil.copyfile(DEFAULT_CONFIG_PATH, CONFIG_PATH)
+        return
+    raise FileNotFoundError(f"config 파일을 찾을 수 없습니다: {CONFIG_PATH}")
 
 def load_config():
+    ensure_config_file()
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    ensure_config_file()
+    backup_dir = os.path.dirname(CONFIG_BACKUP_PATH)
+    if backup_dir:
+        os.makedirs(backup_dir, exist_ok=True)
+    if os.path.exists(CONFIG_PATH):
+        shutil.copyfile(CONFIG_PATH, CONFIG_BACKUP_PATH)
+    temp_path = f"{CONFIG_PATH}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(temp_path, CONFIG_PATH)
 
 # ── 봇 설정 ──────────────────────────────────────────────
 intents = discord.Intents.default()

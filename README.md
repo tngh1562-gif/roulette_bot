@@ -35,6 +35,14 @@ OAuth2 → URL Generator:
   - `thread_id`: 포스트 스레드 ID (아래 참고)
   - `message_id`: 수정할 메시지 ID (처음엔 빈칸 "" 으로 두면 자동 전송 후 저장됨 — 단, 자동저장은 /전체업데이트 후 config.json 에서 직접 메시지ID 확인 후 입력 필요)
 
+### Railway에서 유저목록 유지하기
+Railway 재배포/롤백 후에도 `/유저추가`, `/유저삭제`, 보상 변경 내역을 유지하려면 Volume을 연결하고 환경변수를 설정하세요.
+
+- `CONFIG_PATH`: Volume 안의 config 경로, 예: `/data/config.json`
+- `CONFIG_BACKUP_PATH`: 자동 백업 경로, 예: `/data/config.json.bak`
+
+봇은 `CONFIG_PATH` 파일이 없으면 기본 `config.json`을 복사해서 시작하고, 이후 명령어로 바뀐 내용은 `CONFIG_PATH`에 바로 저장합니다.
+
 ### 스레드 ID 가져오는 방법
 디스코드 설정 → 고급 → 개발자 모드 ON
 포스트(스레드) 이름 우클릭 → "ID 복사"
