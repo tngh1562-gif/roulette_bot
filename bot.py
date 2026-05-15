@@ -26,12 +26,6 @@ intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-REWARD_SECTION_NAMES = {
-    "rewards": "룰렛보상",
-    "sponsor_rewards": "후원보상",
-    "war_rewards": "내전보상",
-}
-
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
     'format': 'bestaudio/best',
@@ -58,7 +52,6 @@ def build_embed(user_data: dict, cfg: dict) -> discord.Embed:
 
     roulette_rewards = user_data.get("rewards", cfg.get("rewards", []))
     sponsor_rewards = user_data.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
-    war_rewards = user_data.get("war_rewards", cfg.get("war_rewards", []))
 
     roulette_lines = "\n".join(
         f"# {r} : {user_counts.get(r, 0)}개"
@@ -67,23 +60,11 @@ def build_embed(user_data: dict, cfg: dict) -> discord.Embed:
     desc = f"### 룰렛보상\n{divider}\n{roulette_lines}"
 
     if sponsor_rewards:
-        visible_sponsor_rewards = [
-            r for r in sponsor_rewards
-            if not (r == "테스트" and user_counts.get(r, 0) == 0)
-            and (r in user_counts or r in user_data.get("sponsor_rewards", []))
-        ]
         sponsor_lines = "\n".join(
             f"# {r} : {user_counts.get(r, 0)}개"
-            for r in visible_sponsor_rewards
+            for r in sponsor_rewards
         )
         desc += f"\n\n### 후원 보상\n{divider}\n{sponsor_lines}"
-
-    if war_rewards:
-        war_lines = "\n".join(
-            f"# {r} : {user_counts.get(r, 0)}개"
-            for r in war_rewards
-        )
-        desc += f"\n\n### 내전보상\n{divider}\n{war_lines}"
 
     embed = discord.Embed(
         description=desc,
@@ -213,8 +194,7 @@ def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
         return None, f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록된 이름을 확인해 주세요."
     all_rewards = (
         target.get("rewards", cfg.get("rewards", [])) +
-        target.get("sponsor_rewards", cfg.get("sponsor_rewards", [])) +
-        target.get("war_rewards", cfg.get("war_rewards", []))
+        target.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
     )
     if 보상이름 not in all_rewards:
         return None, f"보상 항목 `{보상이름}` 이 존재하지 않습니다."
@@ -414,12 +394,11 @@ async def auto_register(interaction: discord.Interaction):
     )
 
 # ── /보상항목추가 ──────────────────────────────────────────────
-@tree.command(name="보상항목추가", description="룰렛보상, 후원보상, 내전보상 섹션에 항목을 추가합니다.")
-@app_commands.describe(항목이름="추가할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
+@tree.command(name="보상항목추가", description="룰렛보상 또는 후원보상 섹션에 항목을 추가합니다.")
+@app_commands.describe(항목이름="추가할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
     app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
 ])
 async def add_reward(interaction: discord.Interaction, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
@@ -439,7 +418,7 @@ async def add_reward(interaction: discord.Interaction, 항목이름: str, 섹션
     for u in cfg.get("users", []):
         result = await update_post_message(u, cfg)
         lines.append(f"• {u.get('name', '?')} — {result}")
-    section_name = REWARD_SECTION_NAMES.get(섹션, 섹션)
+    section_name = "룰렛보상" if 섹션 == "rewards" else "후원보상"
     await interaction.followup.send(
         f"✅ `{section_name}` 에 `{항목이름}` 추가 완료\n" + "\n".join(lines), ephemeral=True,
     )
@@ -486,8 +465,7 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
 
         available_rewards = list(dict.fromkeys(
             matched_user.get("rewards", cfg.get("rewards", [])) +
-            matched_user.get("sponsor_rewards", cfg.get("sponsor_rewards", [])) +
-            matched_user.get("war_rewards", cfg.get("war_rewards", []))
+            matched_user.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
         ))
         for line in block:
             if not line.startswith("("):
@@ -521,11 +499,10 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
 
 # ── /보상항목삭제 ──────────────────────────────────────────
 @tree.command(name="보상항목삭제", description="보상 항목을 삭제하고 전체 유저 메시지를 업데이트합니다.")
-@app_commands.describe(항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
+@app_commands.describe(항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
     app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
 ])
 async def delete_reward(interaction: discord.Interaction, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
@@ -546,12 +523,19 @@ async def delete_reward(interaction: discord.Interaction, 항목이름: str, 섹
     for u in cfg.get("users", []):
         result = await update_post_message(u, cfg)
         lines.append(f"• {u.get('name', '?')} — {result}")
-    section_name = REWARD_SECTION_NAMES.get(섹션, 섹션)
+    section_name = "룰렛보상" if 섹션 == "rewards" else "후원보상"
     await interaction.followup.send(
         f"✅ `{section_name}` 에서 `{항목이름}` 삭제 완료\n" + "\n".join(lines), ephemeral=True,
     )
 
-async def add_user_reward_to_section(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str):
+# ── /개별추가 ──────────────────────────────────────────────
+@tree.command(name="개별추가", description="특정 유저에게만 보상 항목을 추가합니다.")
+@app_commands.describe(닉네임="추가할 유저 닉네임", 항목이름="추가할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
+@app_commands.choices(섹션=[
+    app_commands.Choice(name="룰렛보상", value="rewards"),
+    app_commands.Choice(name="후원보상", value="sponsor_rewards"),
+])
+async def user_add_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
@@ -570,43 +554,17 @@ async def add_user_reward_to_section(interaction: discord.Interaction, 닉네임
     target.setdefault("counts", {})[항목이름] = 0
     save_config(cfg)
     result = await update_post_message(target, cfg)
-    section_name = REWARD_SECTION_NAMES.get(섹션, 섹션)
+    section_name = "룰렛보상" if 섹션 == "rewards" else "후원보상"
     await interaction.followup.send(
         f"✅ `{닉네임}` 의 `{section_name}` 에 `{항목이름}` 추가 완료\n포스트: {result}", ephemeral=True,
     )
 
-
-# ── /개별추가 ──────────────────────────────────────────────
-@tree.command(name="개별추가", description="특정 유저에게만 보상 항목을 추가합니다.")
-@app_commands.describe(닉네임="추가할 유저 닉네임", 항목이름="추가할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
-@app_commands.choices(섹션=[
-    app_commands.Choice(name="룰렛보상", value="rewards"),
-    app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
-])
-async def user_add_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
-    await add_user_reward_to_section(interaction, 닉네임, 항목이름, 섹션)
-
-
-# ── /섹션추가 ──────────────────────────────────────────────
-@tree.command(name="섹션추가", description="특정 유저의 선택한 섹션에 보상 항목을 추가합니다.")
-@app_commands.describe(닉네임="추가할 유저 닉네임", 항목이름="추가할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
-@app_commands.choices(섹션=[
-    app_commands.Choice(name="룰렛보상", value="rewards"),
-    app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
-])
-async def section_add_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
-    await add_user_reward_to_section(interaction, 닉네임, 항목이름, 섹션)
-
-
 # ── /개별삭제 ──────────────────────────────────────────────
 @tree.command(name="개별삭제", description="특정 유저에게만 보상 항목을 삭제합니다.")
-@app_commands.describe(닉네임="삭제할 유저 닉네임", 항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상, 후원보상, 내전보상")
+@app_commands.describe(닉네임="삭제할 유저 닉네임", 항목이름="삭제할 보상 항목 이름", 섹션="룰렛보상 또는 후원보상")
 @app_commands.choices(섹션=[
     app_commands.Choice(name="룰렛보상", value="rewards"),
     app_commands.Choice(name="후원보상", value="sponsor_rewards"),
-    app_commands.Choice(name="내전보상", value="war_rewards"),
 ])
 async def user_delete_reward(interaction: discord.Interaction, 닉네임: str, 항목이름: str, 섹션: str = "rewards"):
     if not is_admin(interaction):
@@ -627,7 +585,7 @@ async def user_delete_reward(interaction: discord.Interaction, 닉네임: str, �
     target.get("counts", {}).pop(항목이름, None)
     save_config(cfg)
     result = await update_post_message(target, cfg)
-    section_name = REWARD_SECTION_NAMES.get(섹션, 섹션)
+    section_name = "룰렛보상" if 섹션 == "rewards" else "후원보상"
     await interaction.followup.send(
         f"✅ `{닉네임}` 의 `{section_name}` 에서 `{항목이름}` 삭제 완료\n포스트: {result}", ephemeral=True,
     )
