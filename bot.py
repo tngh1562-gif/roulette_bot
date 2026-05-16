@@ -296,6 +296,7 @@ def default_discord_config() -> dict:
         "recentPlacementEnabled": True,
         "channelOverrides": {},
         "buttonOnly": False,
+        "plainMessage": False,
         "buttonLabel": "내전 참가 등록",
         "buttonStyle": "primary",
         "panelTitle": "내전 참가 등록",
@@ -436,6 +437,12 @@ async def send_inhouse_register_button(interaction: discord.Interaction):
     view = InhouseRegisterButtonView(config.get("buttonLabel", "내전 참가 등록"), config.get("buttonStyle", "primary"))
     if config.get("buttonOnly") is True:
         await interaction.response.send_message(view=view)
+        return
+    if config.get("plainMessage") is True:
+        title = str(config.get("panelTitle") or "내전 참가 등록").strip()
+        description = str(config.get("panelDescription") or default_discord_config()["panelDescription"]).strip()
+        content = f"**{title}**\n\n{description}" if title else description
+        await interaction.response.send_message(content=content[:2000], view=view)
         return
     embed = discord.Embed(
         title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
