@@ -134,10 +134,14 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
 
 # ── 이벤트 ───────────────────────────────────────────────
 command_sync_done = False
+register_button_view_added = False
 
 @bot.event
 async def on_ready():
-    global command_sync_done
+    global command_sync_done, register_button_view_added
+    if not register_button_view_added:
+        bot.add_view(InhouseRegisterButtonView())
+        register_button_view_added = True
     if command_sync_done:
         print(f"봇 재연결: {bot.user} (명령어 동기화 건너뜀)")
         return
@@ -358,9 +362,36 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
         )
         await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
 
+class InhouseRegisterButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="내전 참가 등록",
+        style=discord.ButtonStyle.primary,
+        custom_id="davido_inhouse_register_button",
+    )
+    async def open_register_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(InhouseRegisterModal())
+
 @tree.command(name="내전등록", description="팝업 양식으로 내전사이트 시청자 DB에 등록합니다.")
 async def inhouse_register(interaction: discord.Interaction):
     await interaction.response.send_modal(InhouseRegisterModal())
+
+@tree.command(name="내전등록버튼", description="시청자가 누르면 내전등록 팝업이 열리는 버튼 메시지를 보냅니다.")
+async def send_inhouse_register_button(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    embed = discord.Embed(
+        title="내전 참가 등록",
+        description=(
+            "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
+            "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
+        ),
+        color=0x5F93C9,
+    )
+    await interaction.response.send_message(embed=embed, view=InhouseRegisterButtonView())
 
 def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
