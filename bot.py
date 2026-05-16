@@ -5,6 +5,7 @@ import json
 import os
 import asyncio
 import shutil
+import re
 import urllib.request
 import urllib.error
 import yt_dlp
@@ -249,15 +250,31 @@ def normalize_tier(raw: str) -> str:
 def normalize_position(raw: str) -> str:
     text = (raw or "").strip().lower().replace(" ", "")
     table = {
-        "탑": "탑", "top": "탑",
-        "정글": "정글", "jg": "정글", "jungle": "정글",
-        "미드": "미드", "mid": "미드",
+        "탑": "탑", "탑솔": "탑", "탑솔러": "탑", "탑라인": "탑", "탑라이너": "탑",
+        "top": "탑", "t": "탑",
+        "정글": "정글", "정글러": "정글", "정": "정글",
+        "jg": "정글", "jgl": "정글", "jungle": "정글", "jungler": "정글", "j": "정글",
+        "미드": "미드", "미드라이너": "미드", "미": "미드",
+        "mid": "미드", "middle": "미드", "m": "미드",
         "원딜": "원딜", "원딜러": "원딜", "원거리딜러": "원딜", "딜러": "원딜",
         "바텀": "원딜", "adc": "원딜", "ad": "원딜", "bot": "원딜", "bottom": "원딜", "btm": "원딜",
-        "서폿": "서포터", "서포터": "서포터", "sup": "서포터", "support": "서포터",
-        "무관": "무관", "상관없음": "무관", "all": "무관", "any": "무관",
+        "서폿": "서포터", "서폿터": "서포터", "서포터": "서포터", "서포트": "서포터", "서": "서포터",
+        "sup": "서포터", "supp": "서포터", "support": "서포터", "spt": "서포터",
+        "무관": "무관", "상관없음": "무관", "아무거나": "무관", "올": "무관", "전체": "무관",
+        "all": "무관", "any": "무관", "fill": "무관", "none": "무관",
     }
     return table.get(text, raw.strip() if raw and raw.strip() else "무관")
+
+def normalize_positions(main_pos: str, sub_pos_text: str) -> list[str]:
+    positions = [normalize_position(main_pos)]
+    parts = [p for p in re.split(r"[,/|·\s]+", sub_pos_text or "") if p.strip()]
+    for part in parts:
+        if len(positions) >= 3:
+            break
+        positions.append(normalize_position(part))
+    while len(positions) < 3:
+        positions.append("무관")
+    return positions
 
 def request_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
     data = None
@@ -300,7 +317,7 @@ async def register_inhouse_viewer(
             "name": clean_lol,
             "chzzk": clean_chzzk,
             "tier": normalize_tier(tier),
-            "positions": [normalize_position(main_pos), normalize_position(sub_pos), "무관"],
+            "positions": normalize_positions(main_pos, sub_pos),
             "discordId": str(discord_id),
         })
         db["vid"] = max(int(db.get("vid", 0) or 0), int(target.get("id", 0) or 0))
@@ -327,7 +344,7 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
     chzzk_name = discord.ui.TextInput(label="치지직 닉네임", placeholder="예: 다비도", max_length=80)
     tier = discord.ui.TextInput(label="티어", placeholder="예: E2, 에메, 다야4, 마200, 그마", max_length=30)
     main_pos = discord.ui.TextInput(label="주 포지션", placeholder="예: 정글", max_length=20)
-    sub_pos = discord.ui.TextInput(label="부 포지션", placeholder="예: 미드 / 없으면 무관", max_length=20, required=False)
+    sub_pos = discord.ui.TextInput(label="부 포지션 1/2", placeholder="예: 미드, 원딜 / 없으면 무관", max_length=40, required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
