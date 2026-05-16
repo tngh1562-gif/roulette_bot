@@ -11,6 +11,7 @@ import urllib.error
 import yt_dlp
 from gtts import gTTS
 import tempfile
+from aiohttp import web
 
 # ── config 로드 ──────────────────────────────────────────
 DEFAULT_CONFIG_PATH = "config.json"
@@ -52,6 +53,8 @@ intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-production.up.railway.app").rstrip("/")
+BOT_API_SECRET = os.getenv("BOT_API_SECRET", "")
+BOT_API_PORT = int(os.getenv("BOT_API_PORT") or os.getenv("PORT") or "8080")
 
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
@@ -135,6 +138,7 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
 # ── 이벤트 ───────────────────────────────────────────────
 command_sync_done = False
 register_button_view_added = False
+bot_api_runner = None
 
 @bot.event
 async def on_ready():
@@ -142,6 +146,7 @@ async def on_ready():
     if not register_button_view_added:
         bot.add_view(InhouseRegisterButtonView())
         register_button_view_added = True
+    await start_bot_api()
     if command_sync_done:
         print(f"봇 재연결: {bot.user} (명령어 동기화 건너뜀)")
         return
@@ -329,6 +334,64 @@ def discord_recent_enabled(config: dict, channel_id: int | None) -> bool:
         return channel_config.get("recentPlacementEnabled") is not False
     return config.get("recentPlacementEnabled") is not False
 
+def build_register_message_kwargs(config: dict) -> dict:
+    view = InhouseRegisterButtonView(config.get("buttonLabel", "내전 참가 등록"), config.get("buttonStyle", "primary"))
+    if config.get("buttonOnly") is True:
+        return {"view": view}
+    if config.get("plainMessage") is True:
+        title = str(config.get("panelTitle") or "내전 참가 등록").strip()
+        description = str(config.get("panelDescription") or default_discord_config()["panelDescription"]).strip()
+        content = f"**{title}**\n\n{description}" if title else description
+        return {"content": content[:2000], "view": view}
+    embed = discord.Embed(
+        title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
+        description=str(config.get("panelDescription") or default_discord_config()["panelDescription"])[:4096],
+        color=0x5F93C9,
+    )
+    return {"embed": embed, "view": view}
+
+async def send_register_button_to_channel(channel_id: int, config: dict):
+    channel = bot.get_channel(int(channel_id))
+    if channel is None:
+        channel = await bot.fetch_channel(int(channel_id))
+    if not hasattr(channel, "send"):
+        raise ValueError("메시지를 보낼 수 없는 채널입니다.")
+    return await channel.send(**build_register_message_kwargs(config))
+
+async def handle_register_button_api(request: web.Request):
+    if not BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "잘못된 요청입니다."}, status=400)
+    if str(data.get("secret", "")) != BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "인증 실패"}, status=403)
+    channel_id = str(data.get("channelId", "")).strip()
+    if not channel_id.isdigit():
+        return web.json_response({"ok": False, "error": "채널 ID가 필요합니다."}, status=400)
+    config = await fetch_discord_config()
+    if not discord_recent_enabled(config, int(channel_id)):
+        return web.json_response({"ok": False, "error": "이 채널은 버튼 생성 OFF 상태입니다."}, status=403)
+    try:
+        msg = await send_register_button_to_channel(int(channel_id), config)
+        return web.json_response({"ok": True, "messageId": str(msg.id)})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+async def start_bot_api():
+    global bot_api_runner
+    if bot_api_runner is not None:
+        return
+    app = web.Application()
+    app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
+    app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
+    bot_api_runner = web.AppRunner(app)
+    await bot_api_runner.setup()
+    site = web.TCPSite(bot_api_runner, "0.0.0.0", BOT_API_PORT)
+    await site.start()
+    print(f"보관함봇 API 서버 시작: 0.0.0.0:{BOT_API_PORT}")
+
 async def register_inhouse_viewer(
     discord_id: int,
     lol_name: str,
@@ -434,22 +497,7 @@ async def send_inhouse_register_button(interaction: discord.Interaction):
     if not discord_recent_enabled(config, interaction.channel_id):
         await interaction.response.send_message("이 채널은 내전사이트 디스코드 관리 탭에서 `최근 메시지 아래 버튼 생성`이 OFF 상태입니다.", ephemeral=True)
         return
-    view = InhouseRegisterButtonView(config.get("buttonLabel", "내전 참가 등록"), config.get("buttonStyle", "primary"))
-    if config.get("buttonOnly") is True:
-        await interaction.response.send_message(view=view)
-        return
-    if config.get("plainMessage") is True:
-        title = str(config.get("panelTitle") or "내전 참가 등록").strip()
-        description = str(config.get("panelDescription") or default_discord_config()["panelDescription"]).strip()
-        content = f"**{title}**\n\n{description}" if title else description
-        await interaction.response.send_message(content=content[:2000], view=view)
-        return
-    embed = discord.Embed(
-        title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
-        description=str(config.get("panelDescription") or default_discord_config()["panelDescription"])[:4096],
-        color=0x5F93C9,
-    )
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.response.send_message(**build_register_message_kwargs(config))
 
 def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)

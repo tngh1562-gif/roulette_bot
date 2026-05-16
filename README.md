@@ -41,6 +41,8 @@ Railway 재배포/롤백 후에도 `/유저추가`, `/유저삭제`, 보상 변�
 - `CONFIG_PATH`: Volume 안의 config 경로, 예: `/data/config.json`
 - `CONFIG_BACKUP_PATH`: 자동 백업 경로, 예: `/data/config.json.bak`
 - `INHOUSE_API_URL`: 내전사이트 주소, 예: `https://davido-inhouse-production.up.railway.app`
+- `BOT_API_SECRET`: 내전사이트가 보관함봇에게 디스코드 버튼 전송을 요청할 때 쓰는 비밀키
+- `BOT_API_PORT`: 보관함봇 API 포트, Railway에서는 보통 비워두면 됩니다.
 
 봇은 `CONFIG_PATH` 파일이 없으면 기본 `config.json`을 복사해서 시작하고, 이후 명령어로 바뀐 내용은 `CONFIG_PATH`에 바로 저장합니다.
 `INHOUSE_API_URL`을 비워두면 기본값으로 다비도 내전사이트 Railway 주소를 사용합니다.
@@ -84,6 +86,11 @@ python bot.py
 → 관리자가 등록용 채널에서 `/내전등록버튼`
 → 채널 최신 위치에 `내전 참가 등록` 버튼 메시지 생성
 → 시청자는 채팅 권한이 없어도 버튼을 눌러 팝업으로 DB 등록 가능
+
+내전사이트에서 바로 디스코드로 버튼 보내기:
+→ 보관함봇 Railway 서비스에 `BOT_API_SECRET` 설정
+→ 내전사이트 Railway 서비스에 `DISCORD_BOT_API_URL`, `DISCORD_BOT_API_SECRET` 설정
+→ 내전사이트 `디스코드 관리` 탭에서 채널 ID 입력 후 `디코로 보내기`
 
 디스코드에서 내전 참가 양식 등록:
 → `/내전등록`
