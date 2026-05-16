@@ -294,6 +294,7 @@ def default_discord_config() -> dict:
     return {
         "registerButtonEnabled": True,
         "recentPlacementEnabled": True,
+        "channelOverrides": {},
         "buttonLabel": "내전 참가 등록",
         "buttonStyle": "primary",
         "panelTitle": "내전 참가 등록",
@@ -316,6 +317,15 @@ def discord_button_style(value: str):
         "danger": discord.ButtonStyle.danger,
         "secondary": discord.ButtonStyle.secondary,
     }.get(value, discord.ButtonStyle.primary)
+
+def discord_recent_enabled(config: dict, channel_id: int | None) -> bool:
+    overrides = config.get("channelOverrides") if isinstance(config, dict) else {}
+    channel_config = None
+    if isinstance(overrides, dict) and channel_id is not None:
+        channel_config = overrides.get(str(channel_id))
+    if isinstance(channel_config, dict) and "recentPlacementEnabled" in channel_config:
+        return channel_config.get("recentPlacementEnabled") is not False
+    return config.get("recentPlacementEnabled") is not False
 
 async def register_inhouse_viewer(
     discord_id: int,
@@ -419,8 +429,8 @@ async def send_inhouse_register_button(interaction: discord.Interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
     config = await fetch_discord_config()
-    if config.get("recentPlacementEnabled") is False:
-        await interaction.response.send_message("내전사이트 디스코드 관리 탭에서 `최근 메시지 아래 버튼 생성`이 OFF 상태입니다.", ephemeral=True)
+    if not discord_recent_enabled(config, interaction.channel_id):
+        await interaction.response.send_message("이 채널은 내전사이트 디스코드 관리 탭에서 `최근 메시지 아래 버튼 생성`이 OFF 상태입니다.", ephemeral=True)
         return
     embed = discord.Embed(
         title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
