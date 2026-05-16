@@ -295,6 +295,7 @@ def default_discord_config() -> dict:
         "registerButtonEnabled": True,
         "recentPlacementEnabled": True,
         "channelOverrides": {},
+        "buttonOnly": False,
         "buttonLabel": "내전 참가 등록",
         "buttonStyle": "primary",
         "panelTitle": "내전 참가 등록",
@@ -432,15 +433,16 @@ async def send_inhouse_register_button(interaction: discord.Interaction):
     if not discord_recent_enabled(config, interaction.channel_id):
         await interaction.response.send_message("이 채널은 내전사이트 디스코드 관리 탭에서 `최근 메시지 아래 버튼 생성`이 OFF 상태입니다.", ephemeral=True)
         return
+    view = InhouseRegisterButtonView(config.get("buttonLabel", "내전 참가 등록"), config.get("buttonStyle", "primary"))
+    if config.get("buttonOnly") is True:
+        await interaction.response.send_message(view=view)
+        return
     embed = discord.Embed(
         title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
         description=str(config.get("panelDescription") or default_discord_config()["panelDescription"])[:4096],
         color=0x5F93C9,
     )
-    await interaction.response.send_message(
-        embed=embed,
-        view=InhouseRegisterButtonView(config.get("buttonLabel", "내전 참가 등록"), config.get("buttonStyle", "primary")),
-    )
+    await interaction.response.send_message(embed=embed, view=view)
 
 def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
