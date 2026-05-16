@@ -141,12 +141,16 @@ register_button_view_added = False
 bot_api_runner = None
 
 @bot.event
-async def on_ready():
-    global command_sync_done, register_button_view_added
+async def setup_hook():
+    global register_button_view_added
     if not register_button_view_added:
         bot.add_view(InhouseRegisterButtonView())
         register_button_view_added = True
     await start_bot_api()
+
+@bot.event
+async def on_ready():
+    global command_sync_done
     if command_sync_done:
         print(f"봇 재연결: {bot.user} (명령어 동기화 건너뜀)")
         return
