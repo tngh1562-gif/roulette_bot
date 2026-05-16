@@ -51,6 +51,34 @@ intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-production.up.railway.app").rstrip("/")
+INHOUSE_TIER_GROUPS = [
+    ("IR", "아이언"),
+    ("BR", "브론즈"),
+    ("SI", "실버"),
+    ("GO", "골드"),
+    ("PL", "플래티넘"),
+    ("EM", "에메랄드"),
+    ("DI", "다이아"),
+    ("MS", "마스터"),
+    ("GM", "그랜드마스터"),
+    ("CH", "챌린저"),
+]
+INHOUSE_TIER_DETAILS = [
+    ("4", "4"),
+    ("3", "3"),
+    ("2", "2"),
+    ("1", "1"),
+    ("0", "0LP"),
+    ("100", "100LP"),
+    ("200", "200LP"),
+    ("300", "300LP"),
+    ("400", "400LP"),
+    ("500", "500LP"),
+    ("600", "600LP"),
+    ("700", "700LP"),
+    ("800", "800LP"),
+]
+INHOUSE_POSITIONS = ["탑", "정글", "미드", "원딜", "서포터", "무관"]
 
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
@@ -248,6 +276,15 @@ def normalize_position(raw: str) -> str:
     }
     return table.get(text, raw.strip() if raw and raw.strip() else "무관")
 
+def build_tier_key(group: str, detail: str) -> str:
+    if group in ("CH", "GM"):
+        return group
+    if group == "MS":
+        return "MS" + (detail if detail in {d[0] for d in INHOUSE_TIER_DETAILS} else "0")
+    if group in {"IR", "BR", "SI", "GO", "PL", "EM", "DI"}:
+        return group + (detail if detail in {"1", "2", "3", "4"} else "4")
+    return "GO4"
+
 def request_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
     data = None
     headers = {"Accept": "application/json"}
@@ -312,11 +349,14 @@ async def register_inhouse_viewer(
     )
 
 class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
+    def __init__(self, tier: str, main_pos: str, sub_pos: str):
+        super().__init__()
+        self.selected_tier = tier
+        self.selected_main_pos = main_pos
+        self.selected_sub_pos = sub_pos
+
     lol_name = discord.ui.TextInput(label="롤 닉네임", placeholder="예: dabido#kr2", max_length=80)
     chzzk_name = discord.ui.TextInput(label="치지직 닉네임", placeholder="예: 다비도", max_length=80)
-    tier = discord.ui.TextInput(label="티어", placeholder="예: 골드4, 다이아2, 마스터100", max_length=30)
-    main_pos = discord.ui.TextInput(label="주 포지션", placeholder="예: 정글", max_length=20)
-    sub_pos = discord.ui.TextInput(label="부 포지션", placeholder="예: 미드 / 없으면 무관", max_length=20, required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -324,15 +364,80 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
             interaction.user.id,
             str(self.lol_name.value),
             str(self.chzzk_name.value),
-            str(self.tier.value),
-            str(self.main_pos.value),
-            str(self.sub_pos.value or "무관"),
+            self.selected_tier,
+            self.selected_main_pos,
+            self.selected_sub_pos,
         )
         await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
 
+class InhouseRegisterView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.tier_group = "GO"
+        self.tier_detail = "4"
+        self.main_pos = "무관"
+        self.sub_pos = "무관"
+
+    @discord.ui.select(
+        placeholder="티어 구간 선택",
+        options=[
+            discord.SelectOption(label=label, value=value, default=(value == "GO"))
+            for value, label in INHOUSE_TIER_GROUPS
+        ],
+        row=0,
+    )
+    async def select_tier_group(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.tier_group = select.values[0]
+        await interaction.response.defer()
+
+    @discord.ui.select(
+        placeholder="세부 단계 / 마스터 LP 선택",
+        options=[
+            discord.SelectOption(label=label, value=value, default=(value == "4"))
+            for value, label in INHOUSE_TIER_DETAILS
+        ],
+        row=1,
+    )
+    async def select_tier_detail(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.tier_detail = select.values[0]
+        await interaction.response.defer()
+
+    @discord.ui.select(
+        placeholder="주 포지션 선택",
+        options=[
+            discord.SelectOption(label=pos, value=pos, default=(pos == "무관"))
+            for pos in INHOUSE_POSITIONS
+        ],
+        row=2,
+    )
+    async def select_main_pos(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.main_pos = select.values[0]
+        await interaction.response.defer()
+
+    @discord.ui.select(
+        placeholder="부 포지션 선택",
+        options=[
+            discord.SelectOption(label=pos, value=pos, default=(pos == "무관"))
+            for pos in INHOUSE_POSITIONS
+        ],
+        row=3,
+    )
+    async def select_sub_pos(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.sub_pos = select.values[0]
+        await interaction.response.defer()
+
+    @discord.ui.button(label="닉네임 입력하기", style=discord.ButtonStyle.primary, row=4)
+    async def open_register_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        tier = build_tier_key(self.tier_group, self.tier_detail)
+        await interaction.response.send_modal(InhouseRegisterModal(tier, self.main_pos, self.sub_pos))
+
 @tree.command(name="내전등록", description="팝업 양식으로 내전사이트 시청자 DB에 등록합니다.")
 async def inhouse_register(interaction: discord.Interaction):
-    await interaction.response.send_modal(InhouseRegisterModal())
+    await interaction.response.send_message(
+        "티어와 포지션을 선택한 뒤 `닉네임 입력하기`를 눌러주세요.",
+        view=InhouseRegisterView(),
+        ephemeral=True,
+    )
 
 def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
