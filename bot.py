@@ -290,6 +290,33 @@ def request_json(url: str, method: str = "GET", payload: dict | None = None) -> 
     with urllib.request.urlopen(req, timeout=10) as res:
         return json.loads(res.read().decode("utf-8"))
 
+def default_discord_config() -> dict:
+    return {
+        "registerButtonEnabled": True,
+        "recentPlacementEnabled": True,
+        "buttonLabel": "내전 참가 등록",
+        "buttonStyle": "primary",
+        "panelTitle": "내전 참가 등록",
+        "panelDescription": (
+            "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
+            "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
+        ),
+    }
+
+async def fetch_discord_config() -> dict:
+    try:
+        config = await asyncio.to_thread(request_json, f"{INHOUSE_API_URL}/api/discord-config")
+        return {**default_discord_config(), **(config or {})}
+    except Exception:
+        return default_discord_config()
+
+def discord_button_style(value: str):
+    return {
+        "success": discord.ButtonStyle.success,
+        "danger": discord.ButtonStyle.danger,
+        "secondary": discord.ButtonStyle.secondary,
+    }.get(value, discord.ButtonStyle.primary)
+
 async def register_inhouse_viewer(
     discord_id: int,
     lol_name: str,
@@ -363,15 +390,23 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
         await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
 
 class InhouseRegisterButtonView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
         super().__init__(timeout=None)
+        self.add_item(InhouseRegisterButton(label, style))
 
-    @discord.ui.button(
-        label="내전 참가 등록",
-        style=discord.ButtonStyle.primary,
-        custom_id="davido_inhouse_register_button",
-    )
-    async def open_register_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+class InhouseRegisterButton(discord.ui.Button):
+    def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
+        super().__init__(
+            label=(label or "내전 참가 등록")[:80],
+            style=discord_button_style(style),
+            custom_id="davido_inhouse_register_button",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        config = await fetch_discord_config()
+        if config.get("registerButtonEnabled") is False:
+            await interaction.response.send_message("지금은 내전 참가 등록 버튼이 OFF 상태입니다.", ephemeral=True)
+            return
         await interaction.response.send_modal(InhouseRegisterModal())
 
 @tree.command(name="내전등록", description="팝업 양식으로 내전사이트 시청자 DB에 등록합니다.")
@@ -383,15 +418,19 @@ async def send_inhouse_register_button(interaction: discord.Interaction):
     if not is_admin(interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
+    config = await fetch_discord_config()
+    if config.get("recentPlacementEnabled") is False:
+        await interaction.response.send_message("내전사이트 디스코드 관리 탭에서 `최근 메시지 아래 버튼 생성`이 OFF 상태입니다.", ephemeral=True)
+        return
     embed = discord.Embed(
-        title="내전 참가 등록",
-        description=(
-            "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
-            "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
-        ),
+        title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
+        description=str(config.get("panelDescription") or default_discord_config()["panelDescription"])[:4096],
         color=0x5F93C9,
     )
-    await interaction.response.send_message(embed=embed, view=InhouseRegisterButtonView())
+    await interaction.response.send_message(
+        embed=embed,
+        view=InhouseRegisterButtonView(config.get("buttonLabel", "내전 참가 등록"), config.get("buttonStyle", "primary")),
+    )
 
 def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
