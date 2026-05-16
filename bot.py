@@ -390,6 +390,69 @@ async def handle_register_button_api(request: web.Request):
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+async def fetch_discord_channel(channel_id: int):
+    channel = bot.get_channel(int(channel_id))
+    if channel is None:
+        channel = await bot.fetch_channel(int(channel_id))
+    return channel
+
+async def handle_move_voice_teams_api(request: web.Request):
+    if not BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "잘못된 요청입니다."}, status=400)
+    if str(data.get("secret", "")) != BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "인증 실패"}, status=403)
+
+    def clean_id(value):
+        text = re.sub(r"\D", "", str(value or ""))
+        return int(text) if text else 0
+
+    lobby_id = clean_id(data.get("lobbyChannelId"))
+    blue_id = clean_id(data.get("blueChannelId"))
+    red_id = clean_id(data.get("redChannelId"))
+    blue_members = [clean_id(v) for v in data.get("blueDiscordIds", []) if clean_id(v)]
+    red_members = [clean_id(v) for v in data.get("redDiscordIds", []) if clean_id(v)]
+    if not lobby_id or not blue_id or not red_id:
+        return web.json_response({"ok": False, "error": "음성채널 ID가 필요합니다."}, status=400)
+
+    try:
+        lobby = await fetch_discord_channel(lobby_id)
+        blue_channel = await fetch_discord_channel(blue_id)
+        red_channel = await fetch_discord_channel(red_id)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"채널 조회 실패: {e}"}, status=400)
+    if not hasattr(lobby, "guild") or not hasattr(blue_channel, "members") or not hasattr(red_channel, "members"):
+        return web.json_response({"ok": False, "error": "등록된 채널이 음성채널이 아닙니다."}, status=400)
+
+    guild = lobby.guild
+    moved = {"blue": 0, "red": 0}
+    skipped = []
+
+    async def move_group(member_ids, target_channel, team_name):
+        for member_id in member_ids:
+            try:
+                member = guild.get_member(member_id) or await guild.fetch_member(member_id)
+                current = getattr(getattr(member, "voice", None), "channel", None)
+                if current and current.id == target_channel.id:
+                    moved[team_name] += 1
+                    continue
+                if not current or current.id != lobby.id:
+                    skipped.append({"discordId": str(member_id), "reason": "not_in_lobby"})
+                    continue
+                await member.move_to(target_channel, reason="내전사이트 팀 음성방 이동")
+                moved[team_name] += 1
+            except discord.Forbidden:
+                skipped.append({"discordId": str(member_id), "reason": "missing_permission"})
+            except Exception as e:
+                skipped.append({"discordId": str(member_id), "reason": str(e)})
+
+    await move_group(blue_members, blue_channel, "blue")
+    await move_group(red_members, red_channel, "red")
+    return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
+
 async def start_bot_api():
     global bot_api_runner
     if bot_api_runner is not None:
@@ -397,6 +460,7 @@ async def start_bot_api():
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
+    app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
     bot_api_runner = web.AppRunner(app)
     await bot_api_runner.setup()
     site = web.TCPSite(bot_api_runner, "0.0.0.0", BOT_API_PORT)
