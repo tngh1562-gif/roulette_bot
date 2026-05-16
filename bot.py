@@ -5,6 +5,8 @@ import json
 import os
 import asyncio
 import shutil
+import urllib.request
+import urllib.error
 import yt_dlp
 from gtts import gTTS
 import tempfile
@@ -48,6 +50,7 @@ intents.message_content = True
 intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
+INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-production.up.railway.app").rstrip("/")
 
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
@@ -210,6 +213,126 @@ async def on_message(message):
 # ── 관리자 권한 체크 ──────────────────────────────────────
 def is_admin(interaction: discord.Interaction) -> bool:
     return interaction.user.guild_permissions.administrator
+
+def normalize_tier(raw: str) -> str:
+    text = (raw or "").strip().upper().replace(" ", "")
+    ko = {
+        "아이언": "IR", "브론즈": "BR", "실버": "SI", "골드": "GO", "플래": "PL",
+        "플래티넘": "PL", "에메": "EM", "에메랄드": "EM", "다이아": "DI",
+        "다이아몬드": "DI", "마스터": "MS", "그마": "GM", "그랜드마스터": "GM", "챌린저": "CH",
+    }
+    for name, code in ko.items():
+        if text.startswith(name):
+            rest = text.replace(name, "", 1).replace("LP", "")
+            return code + (rest or ("0" if code == "MS" else ""))
+    aliases = {
+        "I": "IR", "IRON": "IR", "B": "BR", "BRONZE": "BR", "S": "SI", "SILVER": "SI",
+        "G": "GO", "GOLD": "GO", "P": "PL", "PLATINUM": "PL", "E": "EM", "EMERALD": "EM",
+        "D": "DI", "DIAMOND": "DI", "MASTER": "MS", "GRANDMASTER": "GM", "CHALLENGER": "CH",
+    }
+    for name, code in aliases.items():
+        if text.startswith(name):
+            rest = text.replace(name, "", 1).replace("LP", "")
+            return code + (rest or ("0" if code == "MS" else ""))
+    return text or "GO4"
+
+def normalize_position(raw: str) -> str:
+    text = (raw or "").strip().lower().replace(" ", "")
+    table = {
+        "탑": "탑", "top": "탑",
+        "정글": "정글", "jg": "정글", "jungle": "정글",
+        "미드": "미드", "mid": "미드",
+        "원딜": "원딜", "바텀": "원딜", "adc": "원딜", "ad": "원딜", "bot": "원딜",
+        "서폿": "서포터", "서포터": "서포터", "sup": "서포터", "support": "서포터",
+        "무관": "무관", "상관없음": "무관", "all": "무관", "any": "무관",
+    }
+    return table.get(text, raw.strip() if raw and raw.strip() else "무관")
+
+def request_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=10) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+async def register_inhouse_viewer(
+    discord_id: int,
+    lol_name: str,
+    chzzk_name: str,
+    tier: str,
+    main_pos: str,
+    sub_pos: str,
+) -> tuple[bool, str]:
+    def work():
+        db = request_json(f"{INHOUSE_API_URL}/api/inhouse-db")
+        viewers = db.setdefault("viewers", [])
+        clean_lol = lol_name.strip()
+        clean_chzzk = chzzk_name.strip()
+        key_lol = clean_lol.lower()
+        key_chzzk = clean_chzzk.lower()
+        target = next((v for v in viewers if str(v.get("discordId", "")) == str(discord_id)), None)
+        if not target:
+            target = next((v for v in viewers if str(v.get("name", "")).strip().lower() == key_lol), None)
+        if not target and clean_chzzk:
+            target = next((v for v in viewers if str(v.get("chzzk", "")).strip().lower() == key_chzzk), None)
+
+        is_update = target is not None
+        if not target:
+            next_id = max([int(v.get("id", 0) or 0) for v in viewers] + [int(db.get("vid", 0) or 0)]) + 1
+            target = {"id": next_id, "added": int(discord.utils.utcnow().timestamp() * 1000)}
+            viewers.append(target)
+
+        target.update({
+            "name": clean_lol,
+            "chzzk": clean_chzzk,
+            "tier": normalize_tier(tier),
+            "positions": [normalize_position(main_pos), normalize_position(sub_pos), "무관"],
+            "discordId": str(discord_id),
+        })
+        db["vid"] = max(int(db.get("vid", 0) or 0), int(target.get("id", 0) or 0))
+        request_json(f"{INHOUSE_API_URL}/api/inhouse-db", method="POST", payload=db)
+        return is_update, target
+
+    try:
+        is_update, target = await asyncio.to_thread(work)
+    except urllib.error.HTTPError as e:
+        return False, f"내전사이트 API 오류: HTTP {e.code}"
+    except Exception as e:
+        return False, f"등록 실패: {e}"
+
+    action = "수정" if is_update else "등록"
+    return True, (
+        f"내전사이트 시청자 DB {action} 완료!\n"
+        f"롤닉: `{target['name']}`\n"
+        f"치지직: `{target['chzzk']}`\n"
+        f"티어: `{target['tier']}` / 포지션: `{', '.join(target['positions'])}`"
+    )
+
+class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
+    lol_name = discord.ui.TextInput(label="롤 닉네임", placeholder="예: dabido#kr2", max_length=80)
+    chzzk_name = discord.ui.TextInput(label="치지직 닉네임", placeholder="예: 다비도", max_length=80)
+    tier = discord.ui.TextInput(label="티어", placeholder="예: 골드4, 다이아2, 마스터100", max_length=30)
+    main_pos = discord.ui.TextInput(label="주 포지션", placeholder="예: 정글", max_length=20)
+    sub_pos = discord.ui.TextInput(label="부 포지션", placeholder="예: 미드 / 없으면 무관", max_length=20, required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        ok, message = await register_inhouse_viewer(
+            interaction.user.id,
+            str(self.lol_name.value),
+            str(self.chzzk_name.value),
+            str(self.tier.value),
+            str(self.main_pos.value),
+            str(self.sub_pos.value or "무관"),
+        )
+        await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
+
+@tree.command(name="내전등록", description="팝업 양식으로 내전사이트 시청자 DB에 등록합니다.")
+async def inhouse_register(interaction: discord.Interaction):
+    await interaction.response.send_modal(InhouseRegisterModal())
 
 def find_user_reward(cfg: dict, 닉네임: str, 보상이름: str):
     target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
