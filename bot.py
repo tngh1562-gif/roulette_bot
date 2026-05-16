@@ -310,13 +310,14 @@ def default_discord_config() -> dict:
         "buttonStyle": "primary",
         "panelTitle": "내전 참가 등록",
         "panelDescription": (
-            "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
-            "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
+            "내전 참가 등록은 전체 정보를 입력하고, 디코 연동은 기존 DB 유저가 치지직 닉네임만 입력해 "
+            "디스코드 ID를 연결합니다."
         ),
         "messageContent": (
             "# 내전 참가 등록\n"
-            "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
-            "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
+            "처음 등록하는 사람은 내전 참가 등록 버튼을 눌러주세요.\n"
+            "이미 시청자 DB에 등록된 사람은 디코 연동 버튼을 누르고 치지직 닉네임만 입력하면 "
+            "음성방 이동 기능을 사용할 수 있습니다."
         ),
     }
 
@@ -520,6 +521,56 @@ async def register_inhouse_viewer(
         f"티어: `{target['tier']}` / 포지션: `{', '.join(target['positions'])}`"
     )
 
+async def link_inhouse_discord_by_chzzk(discord_id: int, chzzk_name: str) -> tuple[bool, str]:
+    def normalize(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+    def work():
+        db = request_json(f"{INHOUSE_API_URL}/api/inhouse-db")
+        viewers = db.setdefault("viewers", [])
+        key = normalize(chzzk_name)
+        if not key:
+            raise ValueError("치지직 닉네임을 입력해주세요.")
+
+        matches = [v for v in viewers if normalize(v.get("chzzk", "")) == key]
+        if not matches:
+            raise LookupError("같은 치지직 닉네임을 가진 시청자 DB를 찾지 못했습니다.")
+        if len(matches) > 1:
+            raise LookupError("같은 치지직 닉네임이 2명 이상이라 자동 연동할 수 없습니다.")
+
+        target = matches[0]
+        current_discord_id = str(target.get("discordId", "") or "").strip()
+        if current_discord_id and current_discord_id != str(discord_id):
+            raise PermissionError("이미 다른 디스코드 계정과 연동된 DB입니다.")
+
+        for viewer in viewers:
+            if viewer is not target and str(viewer.get("discordId", "") or "") == str(discord_id):
+                viewer.pop("discordId", None)
+
+        target["discordId"] = str(discord_id)
+        request_json(f"{INHOUSE_API_URL}/api/inhouse-db", method="POST", payload=db)
+        return target
+
+    try:
+        target = await asyncio.to_thread(work)
+    except LookupError as e:
+        return False, str(e)
+    except PermissionError as e:
+        return False, str(e)
+    except ValueError as e:
+        return False, str(e)
+    except urllib.error.HTTPError as e:
+        return False, f"내전사이트 API 오류: HTTP {e.code}"
+    except Exception as e:
+        return False, f"디코 연동 실패: {e}"
+
+    return True, (
+        "디코 연동 완료!\n"
+        f"롤 닉네임: `{target.get('name', '')}`\n"
+        f"치지직: `{target.get('chzzk', '')}`\n"
+        "이제 내전사이트의 디코 팀방 이동 기능을 사용할 수 있습니다."
+    )
+
 class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
     lol_name = discord.ui.TextInput(label="롤 닉네임", placeholder="예: dabido#kr2", max_length=80)
     chzzk_name = discord.ui.TextInput(label="치지직 닉네임", placeholder="예: 다비도", max_length=80)
@@ -539,10 +590,22 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
         )
         await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
 
+class InhouseDiscordLinkModal(discord.ui.Modal, title="디코 연동"):
+    chzzk_name = discord.ui.TextInput(label="치지직 닉네임", placeholder="예: 다비도", max_length=80)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        ok, message = await link_inhouse_discord_by_chzzk(
+            interaction.user.id,
+            str(self.chzzk_name.value),
+        )
+        await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
+
 class InhouseRegisterButtonView(discord.ui.View):
     def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
         super().__init__(timeout=None)
         self.add_item(InhouseRegisterButton(label, style))
+        self.add_item(InhouseDiscordLinkButton())
 
 class InhouseRegisterButton(discord.ui.Button):
     def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
@@ -558,6 +621,21 @@ class InhouseRegisterButton(discord.ui.Button):
             await interaction.response.send_message("지금은 내전 참가 등록 버튼이 OFF 상태입니다.", ephemeral=True)
             return
         await interaction.response.send_modal(InhouseRegisterModal())
+
+class InhouseDiscordLinkButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="디코 연동",
+            style=discord.ButtonStyle.success,
+            custom_id="davido_inhouse_discord_link_button",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        config = await fetch_discord_config()
+        if config.get("registerButtonEnabled") is False:
+            await interaction.response.send_message("지금은 내전 등록/연동 버튼이 OFF 상태입니다.", ephemeral=True)
+            return
+        await interaction.response.send_modal(InhouseDiscordLinkModal())
 
 @tree.command(name="내전등록", description="팝업 양식으로 내전사이트 시청자 DB에 등록합니다.")
 async def inhouse_register(interaction: discord.Interaction):
