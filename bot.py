@@ -309,6 +309,11 @@ def default_discord_config() -> dict:
             "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
             "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
         ),
+        "messageContent": (
+            "# 내전 참가 등록\n"
+            "아래 버튼을 누르면 내전 참가 등록 팝업이 열립니다.\n"
+            "롤 닉네임, 치지직 닉네임, 티어, 포지션을 입력하면 내전사이트 시청자 DB에 등록됩니다."
+        ),
     }
 
 async def fetch_discord_config() -> dict:
@@ -339,9 +344,11 @@ def build_register_message_kwargs(config: dict) -> dict:
     if config.get("buttonOnly") is True:
         return {"view": view}
     if config.get("plainMessage") is True:
-        title = str(config.get("panelTitle") or "내전 참가 등록").strip()
-        description = str(config.get("panelDescription") or default_discord_config()["panelDescription"]).strip()
-        content = f"**{title}**\n\n{description}" if title else description
+        content = str(
+            config.get("messageContent")
+            or config.get("panelDescription")
+            or default_discord_config()["messageContent"]
+        ).strip()
         return {"content": content[:2000], "view": view}
     embed = discord.Embed(
         title=str(config.get("panelTitle") or "내전 참가 등록")[:256],
