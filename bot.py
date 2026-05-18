@@ -156,21 +156,29 @@ async def on_ready():
         return
     guild = discord.Object(id=1428066375334756354)
     try:
-        tree.clear_commands(guild=guild)
-        deleted = await tree.sync(guild=guild)
         tree.copy_global_to(guild=guild)
         synced = await tree.sync(guild=guild)
-        tree.clear_commands(guild=None)
-        global_deleted = await tree.sync()
         print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
-        print(f"기존 서버 명령어 삭제 완료: {len(deleted)}개")
-        print(f"슬래시 명령어 강제 동기화 완료: {len(synced)}개")
-        print(f"전역 명령어 삭제 요청 완료: {len(global_deleted)}개")
+        print(f"슬래시 명령어 동기화 완료: {len(synced)}개")
         command_sync_done = True
         for cmd in synced:
             print(f"  - /{cmd.name}")
     except Exception as e:
         print(f"명령어 동기화 실패: {e}")
+
+@bot.command(name="sync")
+async def sync_commands(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("❌ 관리자 권한이 필요합니다.")
+        return
+    try:
+        guild = discord.Object(id=ctx.guild.id)
+        tree.copy_global_to(guild=guild)
+        synced = await tree.sync(guild=guild)
+        names = "\n".join(f"• /{cmd.name}" for cmd in synced)
+        await ctx.send(f"✅ 슬래시 명령어 **{len(synced)}개** 동기화 완료!\n{names}")
+    except Exception as e:
+        await ctx.send(f"❌ 동기화 실패: {e}")
 
 @bot.event
 async def on_message(message):
