@@ -427,6 +427,16 @@ async def handle_move_voice_teams_api(request: web.Request):
     if not lobby_id or not blue_id or not red_id:
         return web.json_response({"ok": False, "error": "음성채널 ID가 필요합니다."}, status=400)
 
+    skipped = []
+    duplicate_members = set(blue_members) & set(red_members)
+    if duplicate_members:
+        blue_members = [member_id for member_id in blue_members if member_id not in duplicate_members]
+        red_members = [member_id for member_id in red_members if member_id not in duplicate_members]
+        skipped.extend(
+            {"discordId": str(member_id), "reason": "duplicate_team_assignment"}
+            for member_id in sorted(duplicate_members)
+        )
+
     try:
         lobby = await fetch_discord_channel(lobby_id)
         blue_channel = await fetch_discord_channel(blue_id)
@@ -438,10 +448,14 @@ async def handle_move_voice_teams_api(request: web.Request):
 
     guild = lobby.guild
     moved = {"blue": 0, "red": 0}
-    skipped = []
 
     async def move_group(member_ids, target_channel, team_name):
+        seen = set()
         for member_id in member_ids:
+            if member_id in seen:
+                skipped.append({"discordId": str(member_id), "reason": "duplicate_team_assignment"})
+                continue
+            seen.add(member_id)
             try:
                 member = guild.get_member(member_id) or await guild.fetch_member(member_id)
                 current = getattr(getattr(member, "voice", None), "channel", None)
