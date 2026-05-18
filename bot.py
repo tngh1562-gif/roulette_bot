@@ -426,6 +426,8 @@ async def handle_move_voice_teams_api(request: web.Request):
     red_members = [clean_id(v) for v in data.get("redDiscordIds", []) if clean_id(v)]
     if not lobby_id or not blue_id or not red_id:
         return web.json_response({"ok": False, "error": "음성채널 ID가 필요합니다."}, status=400)
+    if len({lobby_id, blue_id, red_id}) != 3:
+        return web.json_response({"ok": False, "error": "내전대기방, 1팀, 2팀 음성채널은 서로 달라야 합니다."}, status=400)
 
     skipped = []
     duplicate_members = set(blue_members) & set(red_members)
