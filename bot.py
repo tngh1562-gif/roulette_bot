@@ -645,6 +645,40 @@ async def handle_bot_command_api(request: web.Request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def handle_send_channel_message(request: web.Request):
+    if not BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "잘못된 요청입니다."}, status=400)
+    if str(data.get("secret", "")) != BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "인증 실패"}, status=403)
+    channel_id = str(data.get("channelId", "")).strip()
+    content = str(data.get("content", "")).strip()
+    include_button = data.get("includeRegisterButton", False)
+    if not channel_id:
+        return web.json_response({"ok": False, "error": "채널 ID가 필요합니다."})
+    if not content:
+        return web.json_response({"ok": False, "error": "내용이 비어있습니다."})
+    try:
+        channel = await bot.fetch_channel(int(channel_id))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"채널 조회 실패: {e}"})
+    try:
+        if include_button:
+            config = await fetch_discord_config()
+            view = InhouseRegisterButtonView(
+                config.get("buttonLabel", "내전 참가 등록"),
+                config.get("buttonStyle", "primary")
+            )
+            await channel.send(content=content, view=view)
+        else:
+            await channel.send(content=content)
+        return web.json_response({"ok": True, "message": "메시지 전송 완료"})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"전송 실패: {e}"})
+
 async def handle_get_config_api(request: web.Request):
     try:
         cfg = load_config()
@@ -668,6 +702,7 @@ async def start_bot_api():
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
     app.router.add_get("/api/config", handle_get_config_api)
+    app.router.add_post("/api/send-channel-message", handle_send_channel_message)
     app.router.add_get("/config-preview", handle_config_preview)
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
     app.router.add_post("/api/bot-command", handle_bot_command_api)
