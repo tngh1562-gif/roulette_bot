@@ -645,12 +645,20 @@ async def handle_bot_command_api(request: web.Request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def handle_get_config_api(request: web.Request):
+    try:
+        cfg = load_config()
+        return web.json_response({"ok": True, "config": cfg})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
 async def start_bot_api():
     global bot_api_runner
     if bot_api_runner is not None:
         return
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
+    app.router.add_get("/api/config", handle_get_config_api)
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
     app.router.add_post("/api/bot-command", handle_bot_command_api)
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
