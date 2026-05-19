@@ -478,6 +478,173 @@ async def handle_move_voice_teams_api(request: web.Request):
     await move_group(red_members, red_channel, "red")
     return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
 
+async def handle_bot_command_api(request: web.Request):
+    if not BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "잘못된 요청입니다."}, status=400)
+    if str(data.get("secret", "")) != BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "인증 실패"}, status=403)
+
+    command = str(data.get("command", "")).strip()
+    opts = data.get("options", {})
+
+    try:
+        cfg = load_config()
+
+        if command == "차감":
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            보상이름 = str(opts.get("보상이름", "")).strip()
+            개수 = int(opts.get("개수", 0))
+            if 개수 <= 0:
+                return web.json_response({"ok": False, "error": "개수는 1 이상이어야 합니다."})
+            target, error = find_user_reward(cfg, 닉네임, 보상이름)
+            if error:
+                return web.json_response({"ok": False, "error": error})
+            counts = target.setdefault("counts", {})
+            before = counts.get(보상이름, 0)
+            after = max(0, before - 개수)
+            counts[보상이름] = after
+            save_config(cfg)
+            result = await update_post_message(target, cfg)
+            return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 차감)\n포스트: {result}"})
+
+        elif command == "추가":
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            보상이름 = str(opts.get("보상이름", "")).strip()
+            개수 = int(opts.get("개수", 0))
+            if 개수 <= 0:
+                return web.json_response({"ok": False, "error": "개수는 1 이상이어야 합니다."})
+            target, error = find_user_reward(cfg, 닉네임, 보상이름)
+            if error:
+                return web.json_response({"ok": False, "error": error})
+            counts = target.setdefault("counts", {})
+            before = counts.get(보상이름, 0)
+            after = before + 개수
+            counts[보상이름] = after
+            save_config(cfg)
+            result = await update_post_message(target, cfg)
+            return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 추가)\n포스트: {result}"})
+
+        elif command == "보상현황":
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
+            if not target:
+                return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다."})
+            counts = target.get("counts", {})
+            rewards = target.get("rewards", cfg.get("rewards", []))
+            sponsor = target.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
+            lines = [f"📦 {닙네임}님의 보관함"]
+            lines += [f"• {r}: {counts.get(r, 0)}개" for r in rewards]
+            if sponsor:
+                lines += ["\n🎁 후원 보상"]
+                lines += [f"• {r}: {counts.get(r, 0)}개" for r in sponsor]
+            return web.json_response({"ok": True, "message": "\n".join(lines)})
+
+        elif command == "유저목록":
+            users = cfg.get("users", [])
+            if not users:
+                return web.json_response({"ok": True, "message": "등록된 유저가 없습니다."})
+            names = [u.get("name", "?") for u in users]
+            return web.json_response({"ok": True, "message": f"등록된 유저 {len(names)}명\n" + "\n".join(f"• {n}" for n in names)})
+
+        elif command == "유저추가":
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            스레드id = str(opts.get("스레드id", "")).strip()
+            메시지id = str(opts.get("메시지id", "")).strip()
+            users = cfg.setdefault("users", [])
+            if any(u["name"] == 닉네임 for u in users):
+                return web.json_response({"ok": False, "error": f"이미 존재하는 유저: `{닉네임}`"})
+            users.append({"name": 닉네임, "thread_id": 스레드id, "message_id": 메시지id, "counts": {r: 0 for r in cfg.get("rewards", [])}})
+            save_config(cfg)
+            return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 추가 완료"})
+
+        elif command == "유저삭제":
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            users = cfg.get("users", [])
+            target = next((u for u in users if u["name"] == 닉네임), None)
+            if not target:
+                return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다."})
+            users.remove(target)
+            save_config(cfg)
+            return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 삭제 완료"})
+
+        elif command == "전체업데이트":
+            users = cfg.get("users", [])
+            if not users:
+                return web.json_response({"ok": True, "message": "유저가 없습니다."})
+            lines = []
+            for u in users:
+                result = await update_post_message(u, cfg)
+                lines.append(f"• {u.get('name','?')} — {result}")
+            return web.json_response({"ok": True, "message": "전체 업데이트 완료\n" + "\n".join(lines)})
+
+        elif command in ("보상항목추가", "개별추가"):
+            항목이름 = str(opts.get("항목이름", "")).strip()
+            섹션 = str(opts.get("섹션", "rewards")).strip()
+            section_name = "룰렛보상" if 섹션 == "rewards" else "후원보상"
+            if command == "개별추가":
+                닉네임 = str(opts.get("닉네임", "")).strip()
+                target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
+                if not target:
+                    return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다."})
+                if 섹션 not in target:
+                    target[섹션] = list(cfg.get(섹션, []))
+                if 항목이름 in target[섹션]:
+                    return web.json_response({"ok": False, "error": f"이미 존재하는 항목: `{항목이름}`"})
+                target[섹션].append(항목이름)
+                target.setdefault("counts", {})[항목이름] = 0
+                save_config(cfg)
+                result = await update_post_message(target, cfg)
+                return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{section_name}` 에 `{항목이름}` 추가 완료\n포스트: {result}"})
+            else:
+                reward_list = cfg.setdefault(섹션, [])
+                if 항목이름 in reward_list:
+                    return web.json_response({"ok": False, "error": f"이미 존재하는 항목: `{항목이름}`"})
+                reward_list.append(항목이름)
+                for u in cfg.get("users", []):
+                    u.setdefault("counts", {})[항목이름] = 0
+                save_config(cfg)
+                return web.json_response({"ok": True, "message": f"✅ `{section_name}` 에 `{항목이름}` 추가 완료"})
+
+        elif command in ("보상항목삭제", "개별삭제"):
+            항목이름 = str(opts.get("항목이름", "")).strip()
+            섹션 = str(opts.get("섹션", "rewards")).strip()
+            section_name = "룰렛보상" if 섹션 == "rewards" else "후원보상"
+            if command == "개별삭제":
+                닉네임 = str(opts.get("닉네임", "")).strip()
+                target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
+                if not target:
+                    return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다."})
+                if 섹션 not in target:
+                    target[섹션] = list(cfg.get(섹션, []))
+                if 항목이름 not in target[섹션]:
+                    return web.json_response({"ok": False, "error": f"항목 `{항목이름}` 을 찾을 수 없습니다."})
+                target[섹션].remove(항목이름)
+                target.get("counts", {}).pop(항목이름, None)
+                save_config(cfg)
+                result = await update_post_message(target, cfg)
+                return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{section_name}` 에서 `{항목이름}` 삭제 완료\n포스트: {result}"})
+            else:
+                reward_list = cfg.get(섹션, [])
+                if 항목이름 not in reward_list:
+                    return web.json_response({"ok": False, "error": f"항목 `{항목이름}` 을 찾을 수 없습니다."})
+                reward_list.remove(항목이름)
+                cfg[섹션] = reward_list
+                for u in cfg.get("users", []):
+                    u.get("counts", {}).pop(항목이름, None)
+                save_config(cfg)
+                return web.json_response({"ok": True, "message": f"✅ `{section_name}` 에서 `{항목이름}` 삭제 완료"})
+
+        else:
+            return web.json_response({"ok": False, "error": f"알 수 없는 명령어: /{command}"})
+
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def start_bot_api():
     global bot_api_runner
     if bot_api_runner is not None:
@@ -485,6 +652,7 @@ async def start_bot_api():
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
+    app.router.add_post("/api/bot-command", handle_bot_command_api)
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
     bot_api_runner = web.AppRunner(app)
     await bot_api_runner.setup()
