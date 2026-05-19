@@ -127,11 +127,21 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
             await msg.edit(embed=embed)
             return "수정 완료"
         except discord.NotFound:
+            message_id = None
+
+    if not message_id:
+        try:
+            async for msg in thread.history(limit=50):
+                if msg.author.id == bot.user.id and msg.embeds:
+                    await msg.edit(embed=embed)
+                    user_data["message_id"] = str(msg.id)
+                    return f"기존 메시지 수정 완료 (ID: {msg.id})"
+        except Exception:
             pass
 
     try:
         sent = await thread.send(embed=embed)
-        user_data["message_id"] = str(sent.id)  # 다음 업데이트 시 수정 가능하도록 저장
+        user_data["message_id"] = str(sent.id)
         return f"신규전송 (메시지ID: {sent.id})"
     except Exception as e:
         return f"전송 실패: {e}"
