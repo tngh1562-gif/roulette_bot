@@ -131,6 +131,7 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
 
     try:
         sent = await thread.send(embed=embed)
+        user_data["message_id"] = str(sent.id)  # 다음 업데이트 시 수정 가능하도록 저장
         return f"신규전송 (메시지ID: {sent.id})"
     except Exception as e:
         return f"전송 실패: {e}"
@@ -579,6 +580,7 @@ async def handle_bot_command_api(request: web.Request):
             for u in users:
                 result = await update_post_message(u, cfg)
                 lines.append(f"• {u.get('name','?')} — {result}")
+            save_config(cfg)  # message_id 변경 사항 저장
             return web.json_response({"ok": True, "message": "전체 업데이트 완료\n" + "\n".join(lines)})
 
         elif command in ("보상항목추가", "개별추가"):
@@ -978,6 +980,7 @@ async def update_all(interaction: discord.Interaction):
     for u in users:
         result = await update_post_message(u, cfg)
         lines.append(f"• {u.get('name', '?')} — {result}")
+    save_config(cfg)  # message_id 변경 사항 저장
     await interaction.followup.send("**전체 업데이트 완료**\n" + "\n".join(lines), ephemeral=True)
 
 # ── /보상현황 ──────────────────────────────────────────────
