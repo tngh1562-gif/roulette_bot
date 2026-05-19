@@ -652,6 +652,15 @@ async def handle_get_config_api(request: web.Request):
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+async def handle_config_preview(request: web.Request):
+    try:
+        html_path = os.path.join(os.path.dirname(__file__), "config-preview.html")
+        with open(html_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return web.Response(text=content, content_type="text/html", charset="utf-8")
+    except Exception as e:
+        return web.Response(text=f"오류: {e}", status=500)
+
 async def start_bot_api():
     global bot_api_runner
     if bot_api_runner is not None:
@@ -659,6 +668,7 @@ async def start_bot_api():
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
     app.router.add_get("/api/config", handle_get_config_api)
+    app.router.add_get("/config-preview", handle_config_preview)
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
     app.router.add_post("/api/bot-command", handle_bot_command_api)
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Config 미리보기</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a2e;color:#e0e0e0;font-family:'Noto Sans KR',monospace;font-size:14px;height:100vh;display:flex;flex-direction:column}
+header{background:#0f0f1a;border-bottom:1px solid #333;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+header h1{font-size:15px;font-weight:700;color:#a89fff}
+.api-url-wrap{display:flex;gap:8px;flex:1}
+.api-url-wrap input{flex:1;background:#252540;border:1px solid #444;border-radius:6px;color:#e0e0e0;padding:6px 12px;font-size:13px;outline:none}
+.api-url-wrap input:focus{border-color:#5865f2}
+.btn{background:#5865f2;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer}
+.btn:hover{background:#4752c4}
+.btn-green{background:#00e5a0;color:#111}
+.btn-green:hover{background:#00c880}
+.status{font-size:12px;color:#72767d}
+main{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden}
+.pane{display:flex;flex-direction:column;overflow:hidden}
+.pane-header{background:#0f0f1a;border-bottom:1px solid #333;padding:10px 16px;font-size:12px;font-weight:700;color:#888;letter-spacing:1px;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.pane-body{flex:1;overflow:auto;padding:16px}
+.pane-body::-webkit-scrollbar{width:6px}
+.pane-body::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+#json-editor{width:100%;height:100%;background:#141425;border:1px solid #333;border-radius:8px;color:#a8d8a8;padding:14px;font-family:monospace;font-size:13px;line-height:1.6;resize:none;outline:none;white-space:pre}
+#json-editor:focus{border-color:#5865f2}
+/* 미리보기 */
+.section{margin-bottom:24px}
+.section-title{font-size:13px;font-weight:800;color:#a89fff;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #333;letter-spacing:.5px}
+.user-card{background:#1e1e35;border:1px solid #333;border-radius:10px;padding:14px;margin-bottom:10px}
+.user-name{font-size:15px;font-weight:800;color:#fff;margin-bottom:6px}
+.user-meta{font-size:11px;color:#666;margin-bottom:8px}
+.reward-list{display:flex;flex-wrap:wrap;gap:6px}
+.reward-chip{background:#252545;border:1px solid #3a3a5a;border-radius:6px;padding:4px 10px;font-size:12px;color:#c8c0ff}
+.reward-chip.has{border-color:#5865f2;color:#a89fff}
+.reward-count{color:#00e5a0;font-weight:700}
+.config-chip{display:inline-flex;align-items:center;gap:6px;background:#252540;border:1px solid #3a3a5a;border-radius:6px;padding:5px 12px;font-size:12px;color:#c0c0c0;margin:4px}
+.empty{color:#555;font-size:13px;padding:20px 0}
+.error-box{background:rgba(240,71,71,.15);border:1px solid rgba(240,71,71,.4);border-radius:8px;padding:12px;color:#f04747;font-size:13px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚙ Config 미리보기</h1>
+  <div class="api-url-wrap">
+    <input id="api-url" type="text" placeholder="https://[봇Railway주소]/api/config"
+      value="/api/config">
+    <button class="btn" onclick="loadConfig()">불러오기</button>
+  </div>
+  <span class="status" id="status">-</span>
+  <button class="btn btn-green" onclick="applyEdit()">편집 → 미리보기 반영</button>
+</header>
+<main>
+  <!-- 왼쪽: JSON 편집기 -->
+  <div class="pane" style="border-right:1px solid #333">
+    <div class="pane-header">
+      <span>JSON 편집기</span>
+      <span style="color:#555;font-size:11px">본파일에는 저장되지 않습니다</span>
+    </div>
+    <div class="pane-body">
+      <textarea id="json-editor" spellcheck="false" placeholder="불러오기 버튼을 눌러 config를 가져오세요..."></textarea>
+    </div>
+  </div>
+  <!-- 오른쪽: 미리보기 -->
+  <div class="pane">
+    <div class="pane-header">미리보기</div>
+    <div class="pane-body" id="preview-pane">
+      <div class="empty">config를 불러오면 미리보기가 표시됩니다.</div>
+    </div>
+  </div>
+</main>
+
+<script>
+let _cfg = null;
+
+async function loadConfig() {
+  const url = document.getElementById('api-url').value.trim();
+  if (!url || url.includes('[봇Railway주소]')) { alert('봇 Railway URL을 입력해주세요'); return; }
+  document.getElementById('status').textContent = '불러오는 중...';
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '응답 오류');
+    _cfg = data.config;
+    document.getElementById('json-editor').value = JSON.stringify(_cfg, null, 2);
+    renderPreview(_cfg);
+    document.getElementById('status').textContent = `✅ 로드 완료 (${new Date().toLocaleTimeString()})`;
+  } catch(e) {
+    document.getElementById('status').textContent = '❌ ' + e.message;
+    document.getElementById('preview-pane').innerHTML = `<div class="error-box">${e.message}</div>`;
+  }
+}
+
+function applyEdit() {
+  const txt = document.getElementById('json-editor').value.trim();
+  try {
+    const cfg = JSON.parse(txt);
+    renderPreview(cfg);
+    document.getElementById('status').textContent = `✅ 미리보기 반영됨 (${new Date().toLocaleTimeString()})`;
+  } catch(e) {
+    document.getElementById('status').textContent = '❌ JSON 오류: ' + e.message;
+  }
+}
+
+function renderPreview(cfg) {
+  const pane = document.getElementById('preview-pane');
+  const rewards = cfg.rewards || [];
+  const sponsorRewards = cfg.sponsor_rewards || [];
+  const users = cfg.users || [];
+
+  let html = '';
+
+  // 기본 설정
+  html += `<div class="section">
+    <div class="section-title">기본 설정</div>
+    <div class="config-chip">🎨 embed_color: <b style="color:#00e5a0">#${cfg.embed_color||'?'}</b></div>
+    <div class="config-chip">🖼 image_url: <b style="color:#a89fff">${cfg.image_url ? '설정됨' : '없음'}</b></div>
+  </div>`;
+
+  // 룰렛 보상 항목
+  html += `<div class="section">
+    <div class="section-title">룰렛 보상 항목 (${rewards.length}개)</div>
+    ${rewards.length ? rewards.map(r=>`<span class="reward-chip">${r}</span>`).join('') : '<div class="empty">항목 없음</div>'}
+  </div>`;
+
+  // 후원 보상 항목
+  if (sponsorRewards.length) {
+    html += `<div class="section">
+      <div class="section-title">후원 보상 항목 (${sponsorRewards.length}개)</div>
+      ${sponsorRewards.map(r=>`<span class="reward-chip">${r}</span>`).join('')}
+    </div>`;
+  }
+
+  // 유저 목록
+  html += `<div class="section">
+    <div class="section-title">등록 유저 (${users.length}명)</div>`;
+  if (!users.length) {
+    html += '<div class="empty">등록된 유저 없음</div>';
+  } else {
+    users.forEach(u => {
+      const counts = u.counts || {};
+      const uRewards = u.rewards || rewards;
+      const uSponsor = u.sponsor_rewards || sponsorRewards;
+      const allRewards = [...new Set([...uRewards, ...uSponsor])];
+      html += `<div class="user-card">
+        <div class="user-name">${esc(u.name || '?')}</div>
+        <div class="user-meta">thread: ${u.thread_id||'-'} | msg: ${u.message_id||'-'}</div>
+        <div class="reward-list">
+          ${allRewards.map(r => {
+            const cnt = counts[r] || 0;
+            return `<span class="reward-chip${cnt>0?' has':''}">${esc(r)} <span class="reward-count">${cnt}</span></span>`;
+          }).join('')}
+        </div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+
+  pane.innerHTML = html;
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// 단축키: Ctrl+Enter → 미리보기 반영
+document.getElementById('json-editor').addEventListener('keydown', e => {
+  if ((e.ctrlKey||e.metaKey) && e.key==='Enter') { e.preventDefault(); applyEdit(); }
+});
+</script>
+</body>
+</html>
