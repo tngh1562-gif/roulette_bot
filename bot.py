@@ -850,7 +850,6 @@ class InhouseRegisterButtonView(discord.ui.View):
     def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
         super().__init__(timeout=None)
         self.add_item(InhouseRegisterButton(label, style))
-        self.add_item(InhouseDiscordLinkButton())
 
 class InhouseRegisterButton(discord.ui.Button):
     def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
