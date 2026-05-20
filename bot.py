@@ -6,6 +6,8 @@ import os
 import asyncio
 import shutil
 import re
+import random
+import time
 import urllib.request
 import urllib.error
 import yt_dlp
@@ -17,6 +19,8 @@ from aiohttp import web
 DEFAULT_CONFIG_PATH = "config.json"
 CONFIG_PATH = os.getenv("CONFIG_PATH", DEFAULT_CONFIG_PATH)
 CONFIG_BACKUP_PATH = os.getenv("CONFIG_BACKUP_PATH", f"{CONFIG_PATH}.bak")
+LEVELS_PATH = os.getenv("LEVELS_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(CONFIG_PATH)), "levels.json"))
 
 def ensure_config_file():
     config_dir = os.path.dirname(CONFIG_PATH)
@@ -196,6 +200,9 @@ async def on_message(message):
     if message.author.bot:
         return
     await bot.process_commands(message)
+
+    # XP 지급 (레벨 시스템) - 논블로킹으로 실행
+    asyncio.create_task(_grant_xp(message))
 
     vc = message.guild.voice_client if message.guild else None
     if not vc or not vc.is_connected():
@@ -1494,6 +1501,319 @@ async def tts_play(interaction: discord.Interaction, 텍스트: str, 언어: str
         await interaction.followup.send(f"🔊 TTS 재생: **{텍스트}**")
     except Exception as e:
         await interaction.followup.send(f"❌ TTS 실패: {e}")
+
+# ══════════════════════════════════════════════════════════
+#  레벨 시스템 (leaderboard.run 호환)
+#  - 공식: level N 달성에 필요한 XP = 5*N² + 50*N + 100 (Mee6/leaderboard.run 동일)
+#  - 메시지당 XP: xp_min ~ xp_max 랜덤, cooldown_seconds 쿨다운
+#  - 데이터: levels.json (CONFIG_PATH 와 같은 디렉터리)
+# ══════════════════════════════════════════════════════════
+
+_levels_lock = asyncio.Lock()
+
+
+def _default_levels() -> dict:
+    return {
+        "users": {},
+        "settings": {
+            "xp_min": 15,
+            "xp_max": 25,
+            "cooldown_seconds": 60,
+            "excluded_channels": [],
+            "level_up_channel": None,
+            "announce": True,
+        },
+    }
+
+
+def _load_levels() -> dict:
+    try:
+        if os.path.exists(LEVELS_PATH):
+            with open(LEVELS_PATH, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            base = _default_levels()
+            base["users"] = raw.get("users", {})
+            base["settings"].update(raw.get("settings", {}))
+            return base
+    except Exception:
+        pass
+    return _default_levels()
+
+
+def _save_levels(data: dict):
+    os.makedirs(os.path.dirname(os.path.abspath(LEVELS_PATH)), exist_ok=True)
+    tmp = LEVELS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, LEVELS_PATH)
+
+
+def _xp_for_level(level: int) -> int:
+    """레벨 N → N+1 에 필요한 XP (leaderboard.run / Mee6 공식)"""
+    return 5 * level * level + 50 * level + 100
+
+
+def _total_xp_for_level(level: int) -> int:
+    """레벨 N 시작 시점의 누적 XP"""
+    return sum(_xp_for_level(i) for i in range(level))
+
+
+def _calc_level(total_xp: int) -> tuple[int, int, int]:
+    """(현재레벨, 현재레벨내XP, 다음레벨까지필요XP) 반환"""
+    level, remaining = 0, total_xp
+    while remaining >= _xp_for_level(level):
+        remaining -= _xp_for_level(level)
+        level += 1
+    return level, remaining, _xp_for_level(level)
+
+
+def _sorted_leaderboard(users: dict) -> list[tuple[str, dict]]:
+    return sorted(users.items(), key=lambda x: x[1].get("xp", 0), reverse=True)
+
+
+async def _grant_xp(message: discord.Message):
+    """메시지 XP 지급 및 레벨업 처리"""
+    if message.author.bot or not message.guild:
+        return
+    uid = str(message.author.id)
+    now = time.time()
+
+    new_level = old_level = 0
+    announce = False
+    level_up_channel_id = None
+
+    async with _levels_lock:
+        data = _load_levels()
+        settings = data["settings"]
+
+        excluded = settings.get("excluded_channels") or []
+        if message.channel.id in excluded:
+            return
+
+        cooldown = settings.get("cooldown_seconds", 60)
+        user = data["users"].setdefault(uid, {"xp": 0, "messages": 0, "last_xp_at": 0})
+
+        if now - user.get("last_xp_at", 0) < cooldown:
+            return
+
+        old_level, _, _ = _calc_level(user.get("xp", 0))
+        gained = random.randint(
+            settings.get("xp_min", 15),
+            max(settings.get("xp_min", 15), settings.get("xp_max", 25)),
+        )
+        user["xp"] = user.get("xp", 0) + gained
+        user["messages"] = user.get("messages", 0) + 1
+        user["last_xp_at"] = now
+        new_level, _, _ = _calc_level(user["xp"])
+        announce = settings.get("announce", True)
+        level_up_channel_id = settings.get("level_up_channel")
+        _save_levels(data)
+
+    if new_level > old_level and announce:
+        target_ch = message.channel
+        if level_up_channel_id:
+            try:
+                target_ch = message.guild.get_channel(int(level_up_channel_id)) or message.channel
+            except Exception:
+                pass
+        embed = discord.Embed(
+            description=f"🎉 {message.author.mention} 님이 **레벨 {new_level}** 에 도달했습니다!",
+            color=0xFFD700,
+        )
+        embed.set_thumbnail(url=message.author.display_avatar.url)
+        try:
+            await target_ch.send(embed=embed)
+        except Exception:
+            pass
+
+
+# ── /랭크 ─────────────────────────────────────────────────
+@tree.command(name="랭크", description="자신 또는 다른 유저의 레벨과 XP를 확인합니다.")
+@app_commands.describe(유저="확인할 유저 (기본: 자신)")
+async def rank_command(interaction: discord.Interaction, 유저: discord.Member = None):
+    member = 유저 or interaction.user
+    data = _load_levels()
+    uid = str(member.id)
+    user = data["users"].get(uid, {"xp": 0, "messages": 0})
+    total_xp = user.get("xp", 0)
+    level, cur_xp, need_xp = _calc_level(total_xp)
+
+    lb = _sorted_leaderboard(data["users"])
+    rank = next((i + 1 for i, (k, _) in enumerate(lb) if k == uid), len(lb) + 1)
+
+    bar_len = 20
+    filled = round(bar_len * cur_xp / need_xp) if need_xp else bar_len
+    bar = "▓" * filled + "░" * (bar_len - filled)
+
+    embed = discord.Embed(color=0x5865F2)
+    embed.set_author(name=f"{member.display_name}의 레벨 카드", icon_url=member.display_avatar.url)
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="레벨", value=f"**{level}**", inline=True)
+    embed.add_field(name="서버 랭킹", value=f"**#{rank}**", inline=True)
+    embed.add_field(name="총 XP", value=f"**{total_xp:,}** XP", inline=True)
+    embed.add_field(
+        name=f"진행도   `{cur_xp:,} / {need_xp:,} XP`",
+        value=f"`{bar}`",
+        inline=False,
+    )
+    embed.set_footer(text=f"총 메시지: {user.get('messages', 0):,}개")
+    await interaction.response.send_message(embed=embed)
+
+
+# ── /리더보드 ──────────────────────────────────────────────
+@tree.command(name="리더보드", description="서버 레벨 상위 유저 목록을 확인합니다.")
+async def leaderboard_command(interaction: discord.Interaction):
+    await interaction.response.defer()
+    data = _load_levels()
+    lb = _sorted_leaderboard(data["users"])[:10]
+
+    if not lb:
+        await interaction.followup.send("아직 레벨 데이터가 없습니다.")
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (uid, udata) in enumerate(lb):
+        total_xp = udata.get("xp", 0)
+        level, _, _ = _calc_level(total_xp)
+        prefix = medals[i] if i < 3 else f"`{i + 1}.`"
+        try:
+            member = interaction.guild.get_member(int(uid)) or await interaction.guild.fetch_member(int(uid))
+            name = member.display_name
+        except Exception:
+            name = f"알 수 없는 유저"
+        lines.append(f"{prefix} **{name}** · Lv.{level} · {total_xp:,} XP")
+
+    embed = discord.Embed(title="🏆 레벨 리더보드", description="\n".join(lines), color=0xFFD700)
+    await interaction.followup.send(embed=embed)
+
+
+# ── /레벨설정 ──────────────────────────────────────────────
+@tree.command(name="레벨설정", description="(관리자) 메시지 XP 지급 설정을 변경합니다.")
+@app_commands.describe(
+    xp_min="메시지당 최소 XP (기본 15)",
+    xp_max="메시지당 최대 XP (기본 25)",
+    쿨다운="XP 쿨다운 초 (기본 60)",
+    레벨업알림="레벨업 알림 ON/OFF",
+)
+async def level_settings(
+    interaction: discord.Interaction,
+    xp_min: int = None,
+    xp_max: int = None,
+    쿨다운: int = None,
+    레벨업알림: bool = None,
+):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    async with _levels_lock:
+        data = _load_levels()
+        s = data["settings"]
+        if xp_min is not None:
+            s["xp_min"] = max(1, xp_min)
+        if xp_max is not None:
+            s["xp_max"] = max(s.get("xp_min", 1), xp_max)
+        if 쿨다운 is not None:
+            s["cooldown_seconds"] = max(0, 쿨다운)
+        if 레벨업알림 is not None:
+            s["announce"] = 레벨업알림
+        _save_levels(data)
+    s = data["settings"]
+    embed = discord.Embed(title="⚙️ 레벨 설정 저장 완료", color=0x5865F2)
+    embed.add_field(name="XP 범위", value=f"{s['xp_min']} ~ {s['xp_max']}", inline=True)
+    embed.add_field(name="쿨다운", value=f"{s['cooldown_seconds']}초", inline=True)
+    embed.add_field(name="레벨업 알림", value="ON ✅" if s.get("announce", True) else "OFF ❌", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ── /레벨초기화 ────────────────────────────────────────────
+@tree.command(name="레벨초기화", description="(관리자) 특정 유저의 XP와 레벨을 초기화합니다.")
+@app_commands.describe(유저="초기화할 유저")
+async def reset_level(interaction: discord.Interaction, 유저: discord.Member):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    async with _levels_lock:
+        data = _load_levels()
+        data["users"].pop(str(유저.id), None)
+        _save_levels(data)
+    await interaction.response.send_message(
+        f"✅ `{유저.display_name}` 의 레벨 데이터를 초기화했습니다.", ephemeral=True
+    )
+
+
+# ── /레벨지정 ─────────────────────────────────────────────
+@tree.command(name="레벨지정", description="(관리자) 유저 레벨을 직접 설정합니다. leaderboard.run 마이그레이션용.")
+@app_commands.describe(유저="레벨을 설정할 유저", 레벨="설정할 레벨 번호")
+async def set_level(interaction: discord.Interaction, 유저: discord.Member, 레벨: int):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    if not (0 <= 레벨 <= 500):
+        await interaction.response.send_message("❌ 레벨은 0~500 사이여야 합니다.", ephemeral=True)
+        return
+    xp = _total_xp_for_level(레벨)
+    async with _levels_lock:
+        data = _load_levels()
+        user = data["users"].setdefault(str(유저.id), {"xp": 0, "messages": 0, "last_xp_at": 0})
+        user["xp"] = xp
+        _save_levels(data)
+    await interaction.response.send_message(
+        f"✅ `{유저.display_name}` → **레벨 {레벨}** 설정 완료 (XP: {xp:,})", ephemeral=True
+    )
+
+
+# ── /레벨임포트 ────────────────────────────────────────────
+class LevelImportModal(discord.ui.Modal, title="레벨 일괄 임포트"):
+    data_input = discord.ui.TextInput(
+        label="디스코드ID:레벨 (한 줄에 하나)",
+        style=discord.TextStyle.long,
+        placeholder="123456789012345678:10\n987654321098765432:7\n...\n\n디스코드 ID는 우클릭 → ID 복사",
+        max_length=4000,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lines = [l.strip() for l in self.data_input.value.splitlines() if l.strip()]
+        results = []
+        async with _levels_lock:
+            data = _load_levels()
+            for line in lines:
+                if ":" not in line:
+                    results.append(f"❌ 형식 오류: `{line}`")
+                    continue
+                uid_str, lvl_str = line.rsplit(":", 1)
+                uid_str = uid_str.strip().lstrip("<@!").rstrip(">")
+                try:
+                    uid = str(int(uid_str))
+                    lvl = int(lvl_str.strip())
+                    if not (0 <= lvl <= 500):
+                        raise ValueError
+                except ValueError:
+                    results.append(f"❌ 파싱 오류: `{line}`")
+                    continue
+                xp = _total_xp_for_level(lvl)
+                user = data["users"].setdefault(uid, {"xp": 0, "messages": 0, "last_xp_at": 0})
+                user["xp"] = xp
+                results.append(f"✅ `{uid}` → Lv.{lvl} ({xp:,} XP)")
+            _save_levels(data)
+
+        summary = "\n".join(results[:25])
+        if len(results) > 25:
+            summary += f"\n...외 {len(results) - 25}명"
+        await interaction.followup.send(
+            f"**임포트 완료 ({len([r for r in results if r.startswith('✅')])}명 성공)**\n{summary}",
+            ephemeral=True,
+        )
+
+
+@tree.command(name="레벨임포트", description="(관리자) leaderboard.run 레벨 데이터를 일괄 임포트합니다.")
+async def level_import(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    await interaction.response.send_modal(LevelImportModal())
+
 
 # ── 실행 ─────────────────────────────────────────────────
 TOKEN = os.getenv("DISCORD_TOKEN") or open("token.txt").read().strip()
