@@ -852,6 +852,13 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
             str(self.main_pos.value),
             str(self.sub_pos.value or "무관"),
         )
+        if ok and interaction.guild:
+            chzzk = str(self.chzzk_name.value).strip()[:32]
+            if chzzk:
+                try:
+                    await interaction.user.edit(nick=chzzk)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
         await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
 
 class InhouseDiscordLinkModal(discord.ui.Modal, title="디코 연동"):
