@@ -1514,7 +1514,7 @@ async def tts_play(interaction: discord.Interaction, 텍스트: str, 언어: str
 
 _levels_lock = asyncio.Lock()
 
-LEVEL_MILESTONE_REWARDS = {10: 1, 20: 2, 30: 3, 40: 4}  # 레벨: 선참권 개수
+LEVEL_MILESTONE_REWARDS = {lv: lv // 10 for lv in range(10, 201, 10)}  # 10→1개, 20→2개, ..., 200→20개
 
 
 def _default_levels() -> dict:
