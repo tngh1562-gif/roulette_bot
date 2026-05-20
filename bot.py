@@ -1514,6 +1514,8 @@ async def tts_play(interaction: discord.Interaction, 텍스트: str, 언어: str
 
 _levels_lock = asyncio.Lock()
 
+LEVEL_MILESTONE_REWARDS = {10: 1, 20: 2, 30: 3, 40: 4}  # 레벨: 선참권 개수
+
 
 def _default_levels() -> dict:
     return {
@@ -1525,6 +1527,7 @@ def _default_levels() -> dict:
             "excluded_channels": [],
             "level_up_channel": None,
             "announce": True,
+            "blocked_guilds": [],
         },
     }
 
@@ -1589,6 +1592,10 @@ async def _grant_xp(message: discord.Message):
         data = _load_levels()
         settings = data["settings"]
 
+        blocked_guilds = settings.get("blocked_guilds") or []
+        if message.guild.id in blocked_guilds:
+            return
+
         excluded = settings.get("excluded_channels") or []
         if message.channel.id in excluded:
             return
@@ -1628,6 +1635,44 @@ async def _grant_xp(message: discord.Message):
             await target_ch.send(embed=embed)
         except Exception:
             pass
+
+        # 마일스톤 보상 체크 (10, 20, 30, 40)
+        for lv in range(old_level + 1, new_level + 1):
+            reward_count = LEVEL_MILESTONE_REWARDS.get(lv)
+            if reward_count:
+                asyncio.create_task(_grant_milestone_reward(message.author, lv, reward_count, target_ch))
+
+
+async def _grant_milestone_reward(member: discord.Member, level: int, reward_count: int, notify_ch):
+    """레벨 마일스톤 달성 시 선참권 자동 지급"""
+    reward_name = "선참권"
+    try:
+        # 인하우스 DB에서 discordId로 시청자 찾기
+        db = await asyncio.to_thread(request_json, f"{INHOUSE_API_URL}/api/inhouse-db")
+        viewer = next((v for v in db.get("viewers", []) if str(v.get("discordId", "")) == str(member.id)), None)
+        if not viewer:
+            return
+        # 치지직 닉 or 롤닉으로 보관함봇 config 유저 매칭
+        cfg = load_config()
+        chzzk = (viewer.get("chzzk") or "").strip()
+        name = (viewer.get("name") or "").strip()
+        target = next((u for u in cfg.get("users", []) if u.get("name", "") in (chzzk, name)), None)
+        if not target:
+            return
+        counts = target.setdefault("counts", {})
+        before = counts.get(reward_name, 0)
+        counts[reward_name] = before + reward_count
+        save_config(cfg)
+        await update_post_message(target, cfg)
+        try:
+            await notify_ch.send(
+                f"🎁 **{member.display_name}** 님이 레벨 **{level}** 달성으로 "
+                f"**{reward_name} {reward_count}개**를 획득했습니다! (누적 {counts[reward_name]}개)"
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 # ── /랭크 ─────────────────────────────────────────────────
@@ -1816,6 +1861,29 @@ async def level_import(interaction: discord.Interaction):
         await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
         return
     await interaction.response.send_modal(LevelImportModal())
+
+
+# ── /렙업정지 ─────────────────────────────────────────────
+@tree.command(name="렙업정지", description="(관리자) 이 서버에서 XP 획득/레벨업을 정지하거나 재개합니다.")
+async def level_block_guild(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    async with _levels_lock:
+        data = _load_levels()
+        blocked = data["settings"].setdefault("blocked_guilds", [])
+        gid = interaction.guild_id
+        if gid in blocked:
+            blocked.remove(gid)
+            status = "✅ 재개"
+        else:
+            blocked.append(gid)
+            status = "🚫 정지"
+        _save_levels(data)
+    await interaction.response.send_message(
+        f"{status} — 이 서버에서 XP 획득/레벨업이 **{'정지' if '정지' in status else '재개'}**됐습니다.",
+        ephemeral=True,
+    )
 
 
 # ── 실행 ─────────────────────────────────────────────────
