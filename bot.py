@@ -169,12 +169,10 @@ async def on_ready():
     if command_sync_done:
         print(f"봇 재연결: {bot.user} (명령어 동기화 건너뜀)")
         return
-    guild = discord.Object(id=1428066375334756354)
     try:
-        tree.copy_global_to(guild=guild)
-        synced = await tree.sync(guild=guild)
+        synced = await tree.sync()  # 전역 동기화 (모든 서버)
         print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
-        print(f"슬래시 명령어 동기화 완료: {len(synced)}개")
+        print(f"슬래시 명령어 전역 동기화 완료: {len(synced)}개")
         command_sync_done = True
         for cmd in synced:
             print(f"  - /{cmd.name}")
@@ -187,11 +185,9 @@ async def sync_commands(ctx):
         await ctx.send("❌ 관리자 권한이 필요합니다.")
         return
     try:
-        guild = discord.Object(id=ctx.guild.id)
-        tree.copy_global_to(guild=guild)
-        synced = await tree.sync(guild=guild)
+        synced = await tree.sync()  # 전역 동기화
         names = "\n".join(f"• /{cmd.name}" for cmd in synced)
-        await ctx.send(f"✅ 슬래시 명령어 **{len(synced)}개** 동기화 완료!\n{names}")
+        await ctx.send(f"✅ 슬래시 명령어 **{len(synced)}개** 전역 동기화 완료!\n{names}")
     except Exception as e:
         await ctx.send(f"❌ 동기화 실패: {e}")
 
