@@ -705,6 +705,18 @@ async def handle_get_config_api(request: web.Request):
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+async def handle_get_levels_api(request: web.Request):
+    try:
+        data = _load_levels()
+        result = {}
+        for uid, udata in data.get("users", {}).items():
+            xp = udata.get("xp", 0)
+            level, cur_xp, need_xp = _calc_level(xp)
+            result[uid] = {"level": level, "xp": xp, "cur_xp": cur_xp, "need_xp": need_xp}
+        return web.json_response({"ok": True, "levels": result})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
 async def handle_config_preview(request: web.Request):
     try:
         html_path = os.path.join(os.path.dirname(__file__), "config-preview.html")
@@ -721,6 +733,7 @@ async def start_bot_api():
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
     app.router.add_get("/api/config", handle_get_config_api)
+    app.router.add_get("/api/levels", handle_get_levels_api)
     app.router.add_post("/api/send-channel-message", handle_send_channel_message)
     app.router.add_get("/config-preview", handle_config_preview)
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
