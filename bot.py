@@ -1624,24 +1624,26 @@ async def _grant_xp(message: discord.Message):
         level_up_channel_id = settings.get("level_up_channel")
         _save_levels(data)
 
-    if new_level > old_level and announce:
+    if new_level > old_level:
         target_ch = message.channel
         if level_up_channel_id:
             try:
                 target_ch = message.guild.get_channel(int(level_up_channel_id)) or message.channel
             except Exception:
                 pass
-        embed = discord.Embed(
-            description=f"🎉 {message.author.mention} 님이 **레벨 {new_level}** 에 도달했습니다!",
-            color=0xFFD700,
-        )
-        embed.set_thumbnail(url=message.author.display_avatar.url)
-        try:
-            await target_ch.send(embed=embed)
-        except Exception:
-            pass
 
-        # 마일스톤 보상 체크 (10, 20, 30, 40)
+        if announce:
+            embed = discord.Embed(
+                description=f"🎉 {message.author.mention} 님이 **레벨 {new_level}** 에 도달했습니다!",
+                color=0xFFD700,
+            )
+            embed.set_thumbnail(url=message.author.display_avatar.url)
+            try:
+                await target_ch.send(embed=embed)
+            except Exception:
+                pass
+
+        # 마일스톤 보상 체크 (announce 여부와 무관하게 항상 실행)
         for lv in range(old_level + 1, new_level + 1):
             reward_count = LEVEL_MILESTONE_REWARDS.get(lv)
             if reward_count:
