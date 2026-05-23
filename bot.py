@@ -206,6 +206,44 @@ async def sync_commands(ctx):
         await ctx.send(f"❌ 동기화 실패: {e}")
 
 @bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if before.channel == after.channel:
+        return
+    async with _levels_lock:
+        data = _load_levels()
+    s = data.get("settings", {})
+    blue_ch  = s.get("voice_blue_channel_id", "")
+    red_ch   = s.get("voice_red_channel_id", "")
+    blue_rid = s.get("voice_blue_role_id", "")
+    red_rid  = s.get("voice_red_role_id", "")
+    if not (blue_ch and red_ch and blue_rid and red_rid):
+        return
+    guild = member.guild
+    blue_role = guild.get_role(int(blue_rid))
+    red_role  = guild.get_role(int(red_rid))
+    # 이전 채널 퇴장 → 역할 회수
+    if before.channel:
+        ch = str(before.channel.id)
+        try:
+            if ch == blue_ch and blue_role and blue_role in member.roles:
+                await member.remove_roles(blue_role, reason="내전 음성채널 퇴장")
+            elif ch == red_ch and red_role and red_role in member.roles:
+                await member.remove_roles(red_role, reason="내전 음성채널 퇴장")
+        except Exception:
+            pass
+    # 새 채널 입장 → 역할 지급
+    if after.channel:
+        ch = str(after.channel.id)
+        try:
+            if ch == blue_ch and blue_role and blue_role not in member.roles:
+                await member.add_roles(blue_role, reason="내전 1팀 음성채널 입장")
+            elif ch == red_ch and red_role and red_role not in member.roles:
+                await member.add_roles(red_role, reason="내전 2팀 음성채널 입장")
+        except Exception:
+            pass
+
+
+@bot.event
 async def on_message(message):
     if message.author.bot:
         return
@@ -1554,6 +1592,10 @@ def _default_levels() -> dict:
             "level_up_channel": None,
             "announce": True,
             "blocked_guilds": [],
+            "voice_blue_channel_id": "",
+            "voice_red_channel_id": "",
+            "voice_blue_role_id": "",
+            "voice_red_role_id": "",
         },
     }
 
@@ -1823,6 +1865,48 @@ async def level_settings(
     embed.add_field(name="XP 범위", value=f"{s['xp_min']} ~ {s['xp_max']}", inline=True)
     embed.add_field(name="쿨다운", value=f"{s['cooldown_seconds']}초", inline=True)
     embed.add_field(name="레벨업 알림", value="ON ✅" if s.get("announce", True) else "OFF ❌", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ── /내전역할설정 ──────────────────────────────────────────
+@tree.command(name="내전역할설정", description="(관리자) 1팀/2팀 음성채널 입장 시 자동 지급할 역할을 설정합니다.")
+@app_commands.describe(
+    블루채널="1팀 음성채널 ID",
+    레드채널="2팀 음성채널 ID",
+    블루역할="1팀 역할",
+    레드역할="2팀 역할",
+)
+async def set_inhouse_voice_roles(
+    interaction: discord.Interaction,
+    블루채널: str = None,
+    레드채널: str = None,
+    블루역할: discord.Role = None,
+    레드역할: discord.Role = None,
+):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    async with _levels_lock:
+        data = _load_levels()
+        s = data["settings"]
+        if 블루채널 is not None:
+            s["voice_blue_channel_id"] = ''.join(c for c in 블루채널 if c.isdigit())
+        if 레드채널 is not None:
+            s["voice_red_channel_id"] = ''.join(c for c in 레드채널 if c.isdigit())
+        if 블루역할 is not None:
+            s["voice_blue_role_id"] = str(블루역할.id)
+        if 레드역할 is not None:
+            s["voice_red_role_id"] = str(레드역할.id)
+        _save_levels(data)
+    s = data["settings"]
+    embed = discord.Embed(title="⚙️ 내전 역할 설정 저장 완료", color=0x1a6ef0)
+    embed.add_field(name="1팀 채널 ID", value=s.get("voice_blue_channel_id") or "미설정", inline=True)
+    embed.add_field(name="2팀 채널 ID", value=s.get("voice_red_channel_id") or "미설정", inline=True)
+    embed.add_field(name="​", value="​", inline=True)
+    blue_rid = s.get("voice_blue_role_id", "")
+    red_rid = s.get("voice_red_role_id", "")
+    embed.add_field(name="1팀 역할", value=f"<@&{blue_rid}>" if blue_rid else "미설정", inline=True)
+    embed.add_field(name="2팀 역할", value=f"<@&{red_rid}>" if red_rid else "미설정", inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
