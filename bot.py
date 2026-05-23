@@ -1654,21 +1654,37 @@ async def _grant_milestone_reward(member: discord.Member, level: int, reward_cou
     """레벨 마일스톤 달성 시 선참권 자동 지급"""
     reward_name = "선참권"
     try:
-        # 인하우스 DB에서 discordId로 시청자 찾기
-        db = await asyncio.to_thread(request_json, f"{INHOUSE_API_URL}/api/inhouse-db")
-        viewer = next((v for v in db.get("viewers", []) if str(v.get("discordId", "")) == str(member.id)), None)
-        if not viewer:
-            return
-        # 치지직 닉 or 롤닉으로 보관함봇 config 유저 매칭
         cfg = load_config()
-        chzzk = (viewer.get("chzzk") or "").strip()
-        name = (viewer.get("name") or "").strip()
-        target = next((u for u in cfg.get("users", []) if u.get("name", "") in (chzzk, name)), None)
+        display = member.display_name.strip()
+
+        # 1차: 디코 표시이름으로 직접 매칭
+        target = next((u for u in cfg.get("users", []) if u.get("name", "").strip() == display), None)
+
+        # 2차: 내전DB 경유 (chzzk닉 or 롤닉)
         if not target:
+            try:
+                db = await asyncio.to_thread(request_json, f"{INHOUSE_API_URL}/api/inhouse-db")
+                viewer = next((v for v in db.get("viewers", []) if str(v.get("discordId", "")) == str(member.id)), None)
+                if viewer:
+                    chzzk = (viewer.get("chzzk") or "").strip()
+                    name = (viewer.get("name") or "").strip()
+                    candidates = {n for n in (chzzk, name) if n}
+                    target = next((u for u in cfg.get("users", []) if u.get("name", "").strip() in candidates), None)
+            except Exception:
+                pass
+
+        if not target:
+            try:
+                await notify_ch.send(
+                    f"⚠️ 레벨 {level} 마일스톤 보상 지급 실패: **{display}** 님을 보관함에서 찾지 못했습니다. "
+                    f"(보관함 등록 이름과 디코 표시이름 or 내전 닉네임이 일치하는지 확인하세요)"
+                )
+            except Exception:
+                pass
             return
+
         counts = target.setdefault("counts", {})
-        before = counts.get(reward_name, 0)
-        counts[reward_name] = before + reward_count
+        counts[reward_name] = counts.get(reward_name, 0) + reward_count
         save_config(cfg)
         await update_post_message(target, cfg)
         try:
@@ -1678,8 +1694,11 @@ async def _grant_milestone_reward(member: discord.Member, level: int, reward_cou
             )
         except Exception:
             pass
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            await notify_ch.send(f"⚠️ 마일스톤 보상 오류 ({member.display_name}, 레벨 {level}): {e}")
+        except Exception:
+            pass
 
 
 # ── /랭크 ─────────────────────────────────────────────────
