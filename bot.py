@@ -59,6 +59,7 @@ tree = bot.tree
 INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-production.up.railway.app").rstrip("/")
 BOT_API_SECRET = os.getenv("BOT_API_SECRET", "")
 BOT_API_PORT = int(os.getenv("BOT_API_PORT") or os.getenv("PORT") or "8080")
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1507737564633891047"))
 
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
@@ -149,6 +150,14 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
         return f"신규전송 (메시지ID: {sent.id})"
     except Exception as e:
         return f"전송 실패: {e}"
+
+async def _send_discord_log(content: str):
+    """LOG_CHANNEL_ID 채널에 로그 메시지 전송"""
+    try:
+        ch = bot.get_channel(LOG_CHANNEL_ID) or await bot.fetch_channel(LOG_CHANNEL_ID)
+        await ch.send(content)
+    except Exception:
+        pass
 
 # ── 이벤트 ───────────────────────────────────────────────
 command_sync_done = False
@@ -528,6 +537,9 @@ async def handle_bot_command_api(request: web.Request):
             counts[보상이름] = after
             save_config(cfg)
             result = await update_post_message(target, cfg)
+            asyncio.create_task(_send_discord_log(
+                f"📋 **[관리자 사이트]** `{닉네임}` **{보상이름} {개수}개 차감** ({before}→{after})"
+            ))
             return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 차감)\n포스트: {result}"})
 
         elif command == "추가":
@@ -545,6 +557,9 @@ async def handle_bot_command_api(request: web.Request):
             counts[보상이름] = after
             save_config(cfg)
             result = await update_post_message(target, cfg)
+            asyncio.create_task(_send_discord_log(
+                f"📋 **[관리자 사이트]** `{닉네임}` **{보상이름} {개수}개 추가** ({before}→{after})"
+            ))
             return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 추가)\n포스트: {result}"})
 
         elif command == "보상현황":
@@ -961,6 +976,9 @@ async def subtract_reward(interaction: discord.Interaction, 닉네임: str, 보�
         f"✅ `{닉네임}` 의 `{보상이름}` **{before}개 → {after}개** ({개수}개 차감)\n포스트 메시지: {result}",
         ephemeral=True,
     )
+    asyncio.create_task(_send_discord_log(
+        f"📋 **[디코 명령어]** `{interaction.user.display_name}` → `{닉네임}` **{보상이름} {개수}개 차감** ({before}→{after})"
+    ))
 
 # ── /추가 ─────────────────────────────────────────────
 @tree.command(name="추가", description="특정 유저의 보상 개수를 추가하고 포스트 메시지를 업데이트합니다.")
@@ -988,6 +1006,9 @@ async def add_reward_count(interaction: discord.Interaction, 닉네임: str, 보
         f"✅ `{닉네임}` 의 `{보상이름}` **{before}개 → {after}개** ({개수}개 추가)\n포스트 메시지: {result}",
         ephemeral=True,
     )
+    asyncio.create_task(_send_discord_log(
+        f"📋 **[디코 명령어]** `{interaction.user.display_name}` → `{닉네임}` **{보상이름} {개수}개 추가** ({before}→{after})"
+    ))
 
 # ── /전체업데이트 ──────────────────────────────────────────
 @tree.command(name="전체업데이트", description="모든 유저의 포스트 메시지를 현재 config 기준으로 일괄 업데이트합니다.")
@@ -1687,6 +1708,11 @@ async def _grant_milestone_reward(member: discord.Member, level: int, reward_cou
         counts[reward_name] = counts.get(reward_name, 0) + reward_count
         save_config(cfg)
         await update_post_message(target, cfg)
+        log_msg = (
+            f"🎁 **[자동지급]** `{member.display_name}` 레벨 **{level}** 달성 → "
+            f"**{reward_name} {reward_count}개** 지급 (누적 {counts[reward_name]}개)"
+        )
+        asyncio.create_task(_send_discord_log(log_msg))
         try:
             await notify_ch.send(
                 f"🎁 **{member.display_name}** 님이 레벨 **{level}** 달성으로 "
