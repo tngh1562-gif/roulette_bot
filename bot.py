@@ -1830,11 +1830,18 @@ async def set_level(interaction: discord.Interaction, 유저: discord.Member, �
     async with _levels_lock:
         data = _load_levels()
         user = data["users"].setdefault(str(유저.id), {"xp": 0, "messages": 0, "last_xp_at": 0})
+        old_level, _, _ = _calc_level(user["xp"])
         user["xp"] = xp
         _save_levels(data)
     await interaction.response.send_message(
         f"✅ `{유저.display_name}` → **레벨 {레벨}** 설정 완료 (XP: {xp:,})", ephemeral=True
     )
+    # 마일스톤 보상 체크 (이전 레벨 → 새 레벨 사이 마일스톤 지급)
+    notify_ch = interaction.channel
+    for lv in range(old_level + 1, 레벨 + 1):
+        reward_count = LEVEL_MILESTONE_REWARDS.get(lv)
+        if reward_count:
+            asyncio.create_task(_grant_milestone_reward(유저, lv, reward_count, notify_ch))
 
 
 # ── /레벨임포트 ────────────────────────────────────────────
