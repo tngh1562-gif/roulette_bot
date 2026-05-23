@@ -54,6 +54,7 @@ def save_config(cfg):
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-production.up.railway.app").rstrip("/")
@@ -223,22 +224,22 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if before.channel:
         ch = str(before.channel.id)
         try:
-            if ch == blue_ch and blue_role and blue_role in member.roles:
+            if ch == blue_ch and blue_role:
                 await member.remove_roles(blue_role, reason="내전 음성채널 퇴장")
-            elif ch == red_ch and red_role and red_role in member.roles:
+            elif ch == red_ch and red_role:
                 await member.remove_roles(red_role, reason="내전 음성채널 퇴장")
-        except Exception:
-            pass
+        except Exception as e:
+            asyncio.create_task(_send_discord_log(f"⚠️ 역할 회수 실패 ({member.display_name}): {e}"))
     # 새 채널 입장 → 역할 지급
     if after.channel:
         ch = str(after.channel.id)
         try:
-            if ch == blue_ch and blue_role and blue_role not in member.roles:
+            if ch == blue_ch and blue_role:
                 await member.add_roles(blue_role, reason="내전 1팀 음성채널 입장")
-            elif ch == red_ch and red_role and red_role not in member.roles:
+            elif ch == red_ch and red_role:
                 await member.add_roles(red_role, reason="내전 2팀 음성채널 입장")
-        except Exception:
-            pass
+        except Exception as e:
+            asyncio.create_task(_send_discord_log(f"⚠️ 역할 지급 실패 ({member.display_name}): {e}"))
 
 
 @bot.event
