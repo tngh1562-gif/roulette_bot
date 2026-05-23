@@ -179,12 +179,10 @@ async def on_ready():
         print(f"봇 재연결: {bot.user} (명령어 동기화 건너뜀)")
         return
     try:
-        # 기존 서버 전용 명령어 제거 (전역 전환 후 중복 방지)
+        # 서버 전용 즉시 동기화 (전역은 최대 1시간 소요)
         guild = discord.Object(id=1428066375334756354)
-        tree.clear_commands(guild=guild)
-        await tree.sync(guild=guild)
-        # 전역 동기화
-        synced = await tree.sync()
+        tree.copy_global_to(guild=guild)
+        synced = await tree.sync(guild=guild)
         print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
         print(f"슬래시 명령어 전역 동기화 완료: {len(synced)}개")
         command_sync_done = True
