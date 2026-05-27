@@ -58,7 +58,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-production.up.railway.app").rstrip("/")
-BOT_API_SECRET = os.getenv("BOT_API_SECRET", "")
+BOT_API_SECRET = os.getenv("BOT_API_SECRET", "") or os.getenv("DISCORD_BOT_API_SECRET", "")
 BOT_API_PORT = int(os.getenv("BOT_API_PORT") or os.getenv("PORT") or "8080")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1507737564633891047"))
 
@@ -801,90 +801,79 @@ async def register_inhouse_viewer(
     sub_pos: str,
 ) -> tuple[bool, str]:
     def work():
-        db = request_json(f"{INHOUSE_API_URL}/api/inhouse-db")
-        viewers = db.setdefault("viewers", [])
-        clean_lol = lol_name.strip()
-        clean_chzzk = chzzk_name.strip()
-        key_lol = clean_lol.lower()
-        key_chzzk = clean_chzzk.lower()
-        target = next((v for v in viewers if str(v.get("discordId", "")) == str(discord_id)), None)
-        if not target:
-            target = next((v for v in viewers if str(v.get("name", "")).strip().lower() == key_lol), None)
-        if not target and clean_chzzk:
-            target = next((v for v in viewers if str(v.get("chzzk", "")).strip().lower() == key_chzzk), None)
-
-        is_update = target is not None
-        if not target:
-            next_id = max([int(v.get("id", 0) or 0) for v in viewers] + [int(db.get("vid", 0) or 0)]) + 1
-            target = {"id": next_id, "added": int(discord.utils.utcnow().timestamp() * 1000)}
-            viewers.append(target)
-
-        target.update({
-            "name": clean_lol,
-            "chzzk": clean_chzzk,
-            "tier": normalize_tier(tier),
-            "positions": normalize_positions(main_pos, sub_pos),
+        payload = {
             "discordId": str(discord_id),
-        })
-        db["vid"] = max(int(db.get("vid", 0) or 0), int(target.get("id", 0) or 0))
-        request_json(f"{INHOUSE_API_URL}/api/inhouse-db", method="POST", payload=db)
-        return is_update, target
+            "name": lol_name.strip(),
+            "chzzk": chzzk_name.strip(),
+            "tier": normalize_tier(tier),
+            "mainPosition": main_pos.strip(),
+            "subPosition": sub_pos.strip(),
+        }
+        if BOT_API_SECRET:
+            payload["secret"] = BOT_API_SECRET
+        result = request_json(
+            f"{INHOUSE_API_URL}/api/inhouse-register",
+            method="POST",
+            payload=payload,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "등록 실패"))
+        return result.get("viewer", {})
 
     try:
-        is_update, target = await asyncio.to_thread(work)
+        viewer = await asyncio.to_thread(work)
     except urllib.error.HTTPError as e:
-        return False, f"내전사이트 API 오류: HTTP {e.code}"
+        err_body = {}
+        try:
+            err_body = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            pass
+        return False, f"내전사이트 API 오류: {err_body.get('error', f'HTTP {e.code}')}"
     except Exception as e:
         return False, f"등록 실패: {e}"
 
-    action = "수정" if is_update else "등록"
+    positions = viewer.get("positions") or []
     return True, (
-        f"내전사이트 시청자 DB {action} 완료!\n"
-        f"롤닉: `{target['name']}`\n"
-        f"치지직: `{target['chzzk']}`\n"
-        f"티어: `{target['tier']}` / 포지션: `{', '.join(target['positions'])}`"
+        f"내전사이트 시청자 DB 등록/수정 완료!\n"
+        f"롤닉: `{viewer.get('name', lol_name.strip())}`\n"
+        f"치지직: `{viewer.get('chzzk', chzzk_name.strip())}`\n"
+        f"티어: `{viewer.get('tier', '?')}` / 포지션: `{', '.join(positions) if positions else '미설정'}`"
     )
 
 async def link_inhouse_discord_by_chzzk(discord_id: int, chzzk_name: str) -> tuple[bool, str]:
-    def normalize(value: str) -> str:
-        return re.sub(r"\s+", " ", str(value or "").strip()).lower()
-
     def work():
-        db = request_json(f"{INHOUSE_API_URL}/api/inhouse-db")
-        viewers = db.setdefault("viewers", [])
-        key = normalize(chzzk_name)
-        if not key:
+        chzzk = chzzk_name.strip()
+        if not chzzk:
             raise ValueError("치지직 닉네임을 입력해주세요.")
-
-        matches = [v for v in viewers if normalize(v.get("chzzk", "")) == key]
-        if not matches:
-            raise LookupError("같은 치지직 닉네임을 가진 시청자 DB를 찾지 못했습니다.")
-        if len(matches) > 1:
-            raise LookupError("같은 치지직 닉네임이 2명 이상이라 자동 연동할 수 없습니다.")
-
-        target = matches[0]
-        current_discord_id = str(target.get("discordId", "") or "").strip()
-        if current_discord_id and current_discord_id != str(discord_id):
-            raise PermissionError("이미 다른 디스코드 계정과 연동된 DB입니다.")
-
-        for viewer in viewers:
-            if viewer is not target and str(viewer.get("discordId", "") or "") == str(discord_id):
-                viewer.pop("discordId", None)
-
-        target["discordId"] = str(discord_id)
-        request_json(f"{INHOUSE_API_URL}/api/inhouse-db", method="POST", payload=db)
-        return target
+        payload = {
+            "discordId": str(discord_id),
+            "chzzk": chzzk,
+        }
+        if BOT_API_SECRET:
+            payload["secret"] = BOT_API_SECRET
+        result = request_json(
+            f"{INHOUSE_API_URL}/api/discord-link",
+            method="POST",
+            payload=payload,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "디코 연동 실패"))
+        return result.get("viewer", {})
 
     try:
         target = await asyncio.to_thread(work)
-    except LookupError as e:
-        return False, str(e)
-    except PermissionError as e:
-        return False, str(e)
     except ValueError as e:
         return False, str(e)
     except urllib.error.HTTPError as e:
-        return False, f"내전사이트 API 오류: HTTP {e.code}"
+        err_body = {}
+        try:
+            err_body = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            pass
+        err_msg = err_body.get("error", f"HTTP {e.code}")
+        if "롤 닉네임" in err_msg or "신규 등록" in err_msg:
+            return False, "치지직 닉네임으로 등록된 시청자 DB를 찾을 수 없습니다.\n처음 등록하는 경우 '내전 참가 등록' 버튼을 이용해 주세요."
+        return False, f"내전사이트 API 오류: {err_msg}"
     except Exception as e:
         return False, f"디코 연동 실패: {e}"
 
