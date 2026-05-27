@@ -125,6 +125,13 @@ async def update_post_message(user_data: dict, cfg: dict) -> str:
     except Exception as e:
         return f"채널 조회 실패: {e}"
 
+    # 아카이브된 스레드는 언아카이브 후 메시지 전송
+    if getattr(thread, 'archived', False):
+        try:
+            await thread.edit(archived=False)
+        except Exception:
+            pass
+
     embed = build_embed(user_data, cfg)
 
     if message_id:
