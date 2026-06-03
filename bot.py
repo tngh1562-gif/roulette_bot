@@ -792,22 +792,38 @@ async def start_bot_api():
     await site.start()
     print(f"보관함봇 API 서버 시작: 0.0.0.0:{BOT_API_PORT}")
 
+def normalize_mic(raw: str) -> str:
+    """마이크 가능 여부 정규화"""
+    t = (raw or "").strip().lower().replace(" ", "")
+    if t in ("가능", "yes", "y", "o", "ㅇ", "1", "true", "ok", "됨", "됩니다"):
+        return "가능"
+    if t in ("부분", "부분가능", "partial", "가끔", "때때로"):
+        return "부분가능"
+    return "불가"
+
 async def register_inhouse_viewer(
     discord_id: int,
     lol_name: str,
     chzzk_name: str,
     tier: str,
-    main_pos: str,
-    sub_pos: str,
+    positions_str: str,
+    mic: str,
 ) -> tuple[bool, str]:
     def work():
+        # "탑, 정글" → ["탑", "정글", "무관"]
+        pos_parts = [p.strip() for p in re.split(r"[,/|·\s]+", positions_str or "") if p.strip()]
+        pos_normalized = [normalize_position(p) for p in pos_parts]
+        while len(pos_normalized) < 3:
+            pos_normalized.append("무관")
+        pos_normalized = pos_normalized[:3]
+
         payload = {
             "discordId": str(discord_id),
             "name": lol_name.strip(),
             "chzzk": chzzk_name.strip(),
             "tier": normalize_tier(tier),
-            "mainPosition": main_pos.strip(),
-            "subPosition": sub_pos.strip(),
+            "positions": pos_normalized,
+            "mic": normalize_mic(mic),
         }
         if BOT_API_SECRET:
             payload["secret"] = BOT_API_SECRET
@@ -833,11 +849,13 @@ async def register_inhouse_viewer(
         return False, f"등록 실패: {e}"
 
     positions = viewer.get("positions") or []
+    mic_val = viewer.get("mic", "불가")
     return True, (
         f"내전사이트 시청자 DB 등록/수정 완료!\n"
         f"롤닉: `{viewer.get('name', lol_name.strip())}`\n"
         f"치지직: `{viewer.get('chzzk', chzzk_name.strip())}`\n"
-        f"티어: `{viewer.get('tier', '?')}` / 포지션: `{', '.join(positions) if positions else '미설정'}`"
+        f"티어: `{viewer.get('tier', '?')}` / 포지션: `{', '.join(positions) if positions else '미설정'}`\n"
+        f"마이크: `{mic_val}`"
     )
 
 async def link_inhouse_discord_by_chzzk(discord_id: int, chzzk_name: str) -> tuple[bool, str]:
@@ -885,11 +903,11 @@ async def link_inhouse_discord_by_chzzk(discord_id: int, chzzk_name: str) -> tup
     )
 
 class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
-    lol_name = discord.ui.TextInput(label="롤 닉네임", placeholder="예: dabido#kr2", max_length=80)
+    lol_name  = discord.ui.TextInput(label="롤 닉네임",  placeholder="예: dabido#kr2", max_length=80)
     chzzk_name = discord.ui.TextInput(label="치지직 닉네임", placeholder="예: 다비도", max_length=80)
-    tier = discord.ui.TextInput(label="티어", placeholder="예: E2, 에메, 다야4, 마200, 그마", max_length=30)
-    main_pos = discord.ui.TextInput(label="주 포지션", placeholder="예: 정글", max_length=20)
-    sub_pos = discord.ui.TextInput(label="부 포지션 1/2", placeholder="예: 미드, 원딜 / 없으면 무관", max_length=40, required=False)
+    tier      = discord.ui.TextInput(label="티어", placeholder="예: E2, 에메, 다야4, 마200, 그마", max_length=30)
+    positions = discord.ui.TextInput(label="포지션 (주/부, 쉼표로 구분)", placeholder="예: 정글, 탑 / 탑, 미드, 원딜", max_length=60, required=False)
+    mic       = discord.ui.TextInput(label="마이크 가능 여부", placeholder="가능 / 불가 / 부분가능", max_length=20, required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -898,8 +916,8 @@ class InhouseRegisterModal(discord.ui.Modal, title="내전 참가 등록"):
             str(self.lol_name.value),
             str(self.chzzk_name.value),
             str(self.tier.value),
-            str(self.main_pos.value),
-            str(self.sub_pos.value or "무관"),
+            str(self.positions.value or "무관"),
+            str(self.mic.value or "불가"),
         )
         if ok and interaction.guild:
             chzzk = str(self.chzzk_name.value).strip()[:32]
