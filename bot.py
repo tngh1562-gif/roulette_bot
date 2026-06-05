@@ -606,6 +606,28 @@ async def handle_bot_command_api(request: web.Request):
             ))
             return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 추가)\n포스트: {result}"})
 
+        elif command == "shop_grant":
+            # 내전 상점 구매 시 rewards 체크 없이 바로 추가
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            보상이름 = str(opts.get("보상이름", "")).strip()
+            개수 = int(opts.get("개수", 1))
+            if not 닉네임 or not 보상이름:
+                return web.json_response({"ok": False, "error": "닉네임과 보상이름이 필요합니다."})
+            # 유저 찾기 (없으면 자동 생성 X, 에러 반환)
+            target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
+            if not target:
+                return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다. `/유저목록`으로 등록 여부를 확인하세요."})
+            counts = target.setdefault("counts", {})
+            before = counts.get(보상이름, 0)
+            after = before + 개수
+            counts[보상이름] = after
+            save_config(cfg)
+            result = await update_post_message(target, cfg)
+            asyncio.create_task(_send_discord_log(
+                f"🛒 **[내전상점]** `{닉네임}` **{보상이름} {개수}개 지급** ({before}→{after})"
+            ))
+            return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 (상점 지급)\n포스트: {result}"})
+
         elif command == "보상현황":
             닉네임 = str(opts.get("닉네임", "")).strip()
             target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
