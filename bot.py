@@ -167,6 +167,31 @@ async def _send_discord_log(content: str):
     except Exception:
         pass
 
+# ── 신규 유저 자동 등록 (포스트 생성 + config 등록) ──────────
+async def create_user_post(cfg: dict, 닉네임: str):
+    try:
+        forum = await bot.fetch_channel(FORUM_CHANNEL_ID)
+    except Exception as e:
+        return None, f"포스트 채널 조회 실패: {e}"
+
+    new_user = {
+        "name": 닉네임,
+        "thread_id": "",
+        "message_id": "",
+        "counts": {r: 0 for r in cfg.get("rewards", [])},
+    }
+    embed = build_embed(new_user, cfg)
+    try:
+        created = await forum.create_thread(name=닉네임, embed=embed)
+        new_user["thread_id"] = str(created.thread.id)
+        new_user["message_id"] = str(created.message.id)
+    except Exception as e:
+        return None, f"포스트 생성 실패: {e}"
+
+    cfg.setdefault("users", []).append(new_user)
+    save_config(cfg)
+    return new_user, None
+
 # ── 이벤트 ───────────────────────────────────────────────
 command_sync_done = False
 register_button_view_added = False
@@ -592,9 +617,22 @@ async def handle_bot_command_api(request: web.Request):
             개수 = int(opts.get("개수", 0))
             if 개수 <= 0:
                 return web.json_response({"ok": False, "error": "개수는 1 이상이어야 합니다."})
-            target, error = find_user_reward(cfg, 닉네임, 보상이름)
-            if error:
-                return web.json_response({"ok": False, "error": error})
+
+            target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
+            registered_note = ""
+            if not target:
+                target, create_error = await create_user_post(cfg, 닉네임)
+                if create_error:
+                    return web.json_response({"ok": False, "error": f"신규 유저 등록 실패: {create_error}"})
+                registered_note = " (신규 포스트 자동 생성)"
+
+            all_rewards = (
+                target.get("rewards", cfg.get("rewards", [])) +
+                target.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
+            )
+            if 보상이름 not in all_rewards:
+                return web.json_response({"ok": False, "error": f"보상 항목 `{보상이름}` 이 존재하지 않습니다."})
+
             counts = target.setdefault("counts", {})
             before = counts.get(보상이름, 0)
             after = before + 개수
@@ -604,7 +642,7 @@ async def handle_bot_command_api(request: web.Request):
             asyncio.create_task(_send_discord_log(
                 f"📋 **[관리자 사이트]** `{닉네임}` **{보상이름} {개수}개 추가** ({before}→{after})"
             ))
-            return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 추가)\n포스트: {result}"})
+            return web.json_response({"ok": True, "message": f"✅ `{닉네임}`{registered_note} 의 `{보상이름}` {before}개 → {after}개 ({개수}개 추가)\n포스트: {result}"})
 
         elif command == "shop_grant":
             # 내전 상점 구매 시 rewards 체크 없이 바로 추가
