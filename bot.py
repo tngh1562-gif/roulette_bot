@@ -918,6 +918,52 @@ async def register_inhouse_viewer(
         f"마이크: `{mic_val}`"
     )
 
+async def register_inhouse_mosts(
+    discord_id: int,
+    most1: str,
+    most2: str,
+    most3: str,
+) -> tuple[bool, str]:
+    def work():
+        mosts = [m.strip() for m in (most1, most2, most3) if m and m.strip()]
+        payload = {
+            "discordId": str(discord_id),
+            "mosts": mosts,
+        }
+        if BOT_API_SECRET:
+            payload["secret"] = BOT_API_SECRET
+        result = request_json(
+            f"{INHOUSE_API_URL}/api/inhouse-register-mosts",
+            method="POST",
+            payload=payload,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "등록 실패"))
+        return result.get("mosts", [])
+
+    try:
+        mosts = await asyncio.to_thread(work)
+    except urllib.error.HTTPError as e:
+        err_body = {}
+        try:
+            err_body = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            pass
+        err_msg = err_body.get("error", f"HTTP {e.code}")
+        if "먼저 진행해주세요" in err_msg:
+            return False, "내전 참가 등록을 먼저 진행해 주세요.\n'내전 참가 등록' 버튼을 이용해 주세요."
+        return False, f"내전사이트 API 오류: {err_msg}"
+    except Exception as e:
+        return False, f"등록 실패: {e}"
+
+    if not mosts:
+        return False, "입력한 챔피언 이름을 인식하지 못했습니다. 정확한 챔피언 이름을 입력해 주세요."
+
+    return True, (
+        "모스트 챔피언 등록 완료!\n"
+        f"등록된 챔피언: `{', '.join(mosts)}`"
+    )
+
 async def link_inhouse_discord_by_chzzk(discord_id: int, chzzk_name: str) -> tuple[bool, str]:
     def work():
         chzzk = chzzk_name.strip()
@@ -999,10 +1045,41 @@ class InhouseDiscordLinkModal(discord.ui.Modal, title="디코 연동"):
         )
         await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
 
+class InhouseMostChampionModal(discord.ui.Modal, title="모스트 챔피언 등록"):
+    most1 = discord.ui.TextInput(label="모스트 챔피언 1", placeholder="예: 아리", max_length=20)
+    most2 = discord.ui.TextInput(label="모스트 챔피언 2", placeholder="예: 럭스", max_length=20, required=False)
+    most3 = discord.ui.TextInput(label="모스트 챔피언 3", placeholder="예: 리신", max_length=20, required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        ok, message = await register_inhouse_mosts(
+            interaction.user.id,
+            str(self.most1.value),
+            str(self.most2.value),
+            str(self.most3.value),
+        )
+        await interaction.followup.send(("✅ " if ok else "❌ ") + message, ephemeral=True)
+
+class InhouseMostsButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="모스트챔피언등록",
+            style=discord.ButtonStyle.secondary,
+            custom_id="davido_inhouse_mosts_button",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        config = await fetch_discord_config()
+        if config.get("registerButtonEnabled") is False:
+            await interaction.response.send_message("지금은 내전 참가 등록 버튼이 OFF 상태입니다.", ephemeral=True)
+            return
+        await interaction.response.send_modal(InhouseMostChampionModal())
+
 class InhouseRegisterButtonView(discord.ui.View):
     def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
         super().__init__(timeout=None)
         self.add_item(InhouseRegisterButton(label, style))
+        self.add_item(InhouseMostsButton())
 
 class InhouseRegisterButton(discord.ui.Button):
     def __init__(self, label: str = "내전 참가 등록", style: str = "primary"):
@@ -1037,6 +1114,10 @@ class InhouseDiscordLinkButton(discord.ui.Button):
 @tree.command(name="내전등록", description="팝업 양식으로 내전사이트 시청자 DB에 등록합니다.")
 async def inhouse_register(interaction: discord.Interaction):
     await interaction.response.send_modal(InhouseRegisterModal())
+
+@tree.command(name="모스트챔피언등록", description="팝업 양식으로 모스트 챔피언 3개를 내전사이트 시청자 DB에 등록합니다.")
+async def inhouse_mosts_register(interaction: discord.Interaction):
+    await interaction.response.send_modal(InhouseMostChampionModal())
 
 @tree.command(name="내전등록버튼", description="시청자가 누르면 내전등록 팝업이 열리는 버튼 메시지를 보냅니다.")
 async def send_inhouse_register_button(interaction: discord.Interaction):
