@@ -1115,10 +1115,6 @@ class InhouseDiscordLinkButton(discord.ui.Button):
 async def inhouse_register(interaction: discord.Interaction):
     await interaction.response.send_modal(InhouseRegisterModal())
 
-@tree.command(name="모스트챔피언등록", description="팝업 양식으로 모스트 챔피언 3개를 내전사이트 시청자 DB에 등록합니다.")
-async def inhouse_mosts_register(interaction: discord.Interaction):
-    await interaction.response.send_modal(InhouseMostChampionModal())
-
 @tree.command(name="내전등록버튼", description="시청자가 누르면 내전등록 팝업이 열리는 버튼 메시지를 보냅니다.")
 async def send_inhouse_register_button(interaction: discord.Interaction):
     if not is_admin(interaction):
