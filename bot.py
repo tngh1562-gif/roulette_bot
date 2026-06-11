@@ -575,6 +575,101 @@ async def handle_move_voice_teams_api(request: web.Request):
     await move_group(red_members, red_channel, "red")
     return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
 
+async def handle_move_voice_teams_multi_api(request: web.Request):
+    """N개 팀 음성채널 이동 + 역할 부여 (경매사이트 등에서 사용)"""
+    if not BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "잘못된 요청입니다."}, status=400)
+    if str(data.get("secret", "")) != BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "인증 실패"}, status=403)
+
+    def clean_id(value):
+        text = re.sub(r"\D", "", str(value or ""))
+        return int(text) if text else 0
+
+    lobby_id = clean_id(data.get("lobbyChannelId"))
+    teams_in = data.get("teams") if isinstance(data.get("teams"), list) else []
+    if not lobby_id or not teams_in:
+        return web.json_response({"ok": False, "error": "lobbyChannelId / teams가 필요합니다."}, status=400)
+
+    try:
+        lobby = await fetch_discord_channel(lobby_id)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"대기방 채널 조회 실패: {e}"}, status=400)
+    if not hasattr(lobby, "guild"):
+        return web.json_response({"ok": False, "error": "대기방 채널이 음성채널이 아닙니다."}, status=400)
+    guild = lobby.guild
+
+    teams = []
+    for t in teams_in:
+        ch_id = clean_id(t.get("channelId"))
+        role_id = clean_id(t.get("roleId"))
+        member_ids = [clean_id(v) for v in (t.get("discordIds") or []) if clean_id(v)]
+        if not ch_id:
+            continue
+        try:
+            channel = await fetch_discord_channel(ch_id)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"팀 채널 조회 실패({ch_id}): {e}"}, status=400)
+        if not hasattr(channel, "members"):
+            return web.json_response({"ok": False, "error": f"등록된 채널({ch_id})이 음성채널이 아닙니다."}, status=400)
+        role = guild.get_role(role_id) if role_id else None
+        teams.append({
+            "name": str(t.get("name") or ch_id),
+            "channel": channel,
+            "role": role,
+            "members": member_ids,
+        })
+
+    all_roles = {team["role"] for team in teams if team["role"]}
+    moved = {}
+    skipped = []
+    seen = set()
+
+    for team in teams:
+        moved[team["name"]] = 0
+        for member_id in team["members"]:
+            if member_id in seen:
+                skipped.append({"discordId": str(member_id), "reason": "duplicate_team_assignment"})
+                continue
+            seen.add(member_id)
+            try:
+                member = guild.get_member(member_id) or await guild.fetch_member(member_id)
+            except Exception as e:
+                skipped.append({"discordId": str(member_id), "reason": str(e)})
+                continue
+
+            current = getattr(getattr(member, "voice", None), "channel", None)
+            try:
+                if current and current.id == team["channel"].id:
+                    moved[team["name"]] += 1
+                elif current and current.id == lobby.id:
+                    await member.move_to(team["channel"], reason="경매 결과 - 팀 음성채널 이동")
+                    moved[team["name"]] += 1
+                else:
+                    skipped.append({"discordId": str(member_id), "reason": "not_in_lobby"})
+            except discord.Forbidden:
+                skipped.append({"discordId": str(member_id), "reason": "missing_permission"})
+            except Exception as e:
+                skipped.append({"discordId": str(member_id), "reason": str(e)})
+
+            if team["role"]:
+                try:
+                    remove_roles = [r for r in all_roles if r.id != team["role"].id and r in member.roles]
+                    if remove_roles:
+                        await member.remove_roles(*remove_roles, reason="경매 결과 - 팀 변경")
+                    if team["role"] not in member.roles:
+                        await member.add_roles(team["role"], reason="경매 결과 - 팀 역할 부여")
+                except discord.Forbidden:
+                    pass
+                except Exception:
+                    pass
+
+    return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
+
 async def handle_bot_command_api(request: web.Request):
     if not BOT_API_SECRET:
         return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
@@ -846,6 +941,7 @@ async def start_bot_api():
     app.router.add_post("/api/inhouse-register-button", handle_register_button_api)
     app.router.add_post("/api/bot-command", handle_bot_command_api)
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
+    app.router.add_post("/api/move-voice-teams-multi", handle_move_voice_teams_multi_api)
     bot_api_runner = web.AppRunner(app)
     await bot_api_runner.setup()
     site = web.TCPSite(bot_api_runner, "0.0.0.0", BOT_API_PORT)
