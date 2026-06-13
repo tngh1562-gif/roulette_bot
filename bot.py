@@ -247,23 +247,29 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     red_ch   = s.get("voice_red_channel_id", "")
     blue_rid = s.get("voice_blue_role_id", "")
     red_rid  = s.get("voice_red_role_id", "")
-    if not (blue_ch and red_ch and blue_rid and red_rid):
+    auction_map = s.get("auction_team_channel_roles", {}) or {}
+    has_blue_red = bool(blue_ch and red_ch and blue_rid and red_rid)
+    if not has_blue_red and not auction_map:
         return
     guild = member.guild
-    blue_role = guild.get_role(int(blue_rid))
-    red_role  = guild.get_role(int(red_rid))
+    blue_role = guild.get_role(int(blue_rid)) if has_blue_red else None
+    red_role  = guild.get_role(int(red_rid)) if has_blue_red else None
     # 이전 채널 퇴장 → 역할 회수
     if before.channel:
         ch = str(before.channel.id)
         try:
-            if ch == blue_ch and blue_role:
+            if has_blue_red and ch == blue_ch and blue_role:
                 await member.remove_roles(blue_role, reason="내전 음성채널 퇴장")
-            elif ch == red_ch and red_role:
+            elif has_blue_red and ch == red_ch and red_role:
                 await member.remove_roles(red_role, reason="내전 음성채널 퇴장")
+            elif ch in auction_map:
+                auction_role = guild.get_role(int(auction_map[ch]))
+                if auction_role and auction_role in member.roles:
+                    await member.remove_roles(auction_role, reason="경매 내전 음성채널 퇴장")
         except Exception as e:
             asyncio.create_task(_send_discord_log(f"⚠️ 역할 회수 실패 ({member.display_name}): {e}"))
     # 새 채널 입장 → 역할 지급
-    if after.channel:
+    if has_blue_red and after.channel:
         ch = str(after.channel.id)
         try:
             if ch == blue_ch and blue_role:
@@ -628,6 +634,15 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
     moved = {}
     skipped = []
     seen = set()
+
+    # 음성채널 ↔ 팀 역할 매핑 저장 (퇴장 시 자동 역할 회수에 사용)
+    async with _levels_lock:
+        level_data = _load_levels()
+        ch_role_map = level_data["settings"].setdefault("auction_team_channel_roles", {})
+        for team in teams:
+            if team["role"]:
+                ch_role_map[str(team["channel"].id)] = str(team["role"].id)
+        _save_levels(level_data)
 
     for team in teams:
         moved[team["name"]] = 0
@@ -1842,6 +1857,7 @@ def _default_levels() -> dict:
             "voice_red_channel_id": "",
             "voice_blue_role_id": "",
             "voice_red_role_id": "",
+            "auction_team_channel_roles": {},
         },
     }
 
