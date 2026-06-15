@@ -630,19 +630,30 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
             "members": member_ids,
         })
 
-    all_roles = {team["role"] for team in teams if team["role"]}
     moved = {}
     skipped = []
     seen = set()
 
-    # 음성채널 ↔ 팀 역할 매핑 저장 (퇴장 시 자동 역할 회수에 사용)
+    # 음성채널 ↔ 팀 역할 매핑 불러오기/갱신 (퇴장 시 자동 역할 회수, 이전 라운드 역할 정리에 사용)
     async with _levels_lock:
         level_data = _load_levels()
         ch_role_map = level_data["settings"].setdefault("auction_team_channel_roles", {})
+        prev_map = dict(ch_role_map)
         for team in teams:
             if team["role"]:
                 ch_role_map[str(team["channel"].id)] = str(team["role"].id)
         _save_levels(level_data)
+
+    # 이번 라운드 팀 역할 + 과거 경매에서 부여됐던 팀 역할(정리 대상)을 모두 포함
+    all_roles = {team["role"] for team in teams if team["role"]}
+    for rid in prev_map.values():
+        role = guild.get_role(int(rid))
+        if role:
+            all_roles.add(role)
+
+    # 대기방뿐 아니라 다른 팀 음성채널에 있던 멤버도 재배치 대상으로 허용
+    auction_channel_ids = {int(ch) for ch in prev_map}
+    auction_channel_ids |= {team["channel"].id for team in teams}
 
     for team in teams:
         moved[team["name"]] = 0
@@ -661,7 +672,7 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
             try:
                 if current and current.id == team["channel"].id:
                     moved[team["name"]] += 1
-                elif current and current.id == lobby.id:
+                elif current and (current.id == lobby.id or current.id in auction_channel_ids):
                     await member.move_to(team["channel"], reason="경매 결과 - 팀 음성채널 이동")
                     moved[team["name"]] += 1
                 else:
@@ -679,9 +690,12 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
                     if team["role"] not in member.roles:
                         await member.add_roles(team["role"], reason="경매 결과 - 팀 역할 부여")
                 except discord.Forbidden:
-                    pass
-                except Exception:
-                    pass
+                    skipped.append({"discordId": str(member_id), "reason": "role_missing_permission"})
+                    asyncio.create_task(_send_discord_log(
+                        f"⚠️ 경매 팀 역할 지급/회수 실패 (권한 부족 - 봇 역할이 `{team['role'].name}`보다 위에 있는지 확인하세요): {member.display_name}"
+                    ))
+                except Exception as e:
+                    asyncio.create_task(_send_discord_log(f"⚠️ 경매 팀 역할 지급/회수 실패 ({member.display_name}): {e}"))
 
     return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
 
