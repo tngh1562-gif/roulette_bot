@@ -61,6 +61,9 @@ INHOUSE_API_URL = os.getenv("INHOUSE_API_URL", "https://davido-inhouse-productio
 BOT_API_SECRET = os.getenv("BOT_API_SECRET", "") or os.getenv("DISCORD_BOT_API_SECRET", "")
 BOT_API_PORT = int(os.getenv("BOT_API_PORT") or os.getenv("PORT") or "8080")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1507737564633891047"))
+ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "1488511038881271860"))
+VIEWER_SERVER_URL = os.getenv("VIEWER_SERVER_URL", "").rstrip("/")
+VIEWER_SERVER_SECRET = os.getenv("VIEWER_SERVER_SECRET", "davido-admin")
 
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
@@ -280,11 +283,29 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             asyncio.create_task(_send_discord_log(f"⚠️ 역할 지급 실패 ({member.display_name}): {e}"))
 
 
+async def _sync_announce_to_viewer(message: discord.Message):
+    """디스코드 공지 채널 메시지 → 뷰어 플랫폼 공지사항 동기화"""
+    if not VIEWER_SERVER_URL:
+        return
+    lines = message.content.strip().splitlines()
+    title = lines[0][:80] if lines else "(공지)"
+    body = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+    payload = json.dumps({"title": title, "body": body, "prize": ""}).encode("utf-8")
+    url = f"{VIEWER_SERVER_URL}/api/admin/announce"
+    try:
+        req = urllib.request.Request(url, data=payload, method="POST",
+            headers={"Content-Type": "application/json", "x-admin-secret": VIEWER_SERVER_SECRET})
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[ANNOUNCE] 뷰어 서버 전송 실패: {e}")
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
     await bot.process_commands(message)
+    if message.channel.id == ANNOUNCE_CHANNEL_ID:
+        asyncio.create_task(_sync_announce_to_viewer(message))
 
     # XP 지급 (레벨 시스템) - 논블로킹으로 실행
     asyncio.create_task(_grant_xp(message))
