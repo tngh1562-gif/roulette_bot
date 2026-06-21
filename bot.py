@@ -66,6 +66,13 @@ ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "1488511038881271860"
 VIEWER_SERVER_URL = os.getenv("VIEWER_SERVER_URL", "").rstrip("/")
 VIEWER_SERVER_SECRET = os.getenv("VIEWER_SERVER_SECRET", "davido-admin")
 
+def clean_discord_mentions(text: str) -> str:
+    """<@&숫자> <@숫자> <#숫자> 등 Discord 멘션 제거"""
+    import re
+    text = re.sub(r'<@[!&]?\d+>', '', text)
+    text = re.sub(r'<#\d+>', '', text)
+    return ' '.join(text.split())
+
 # ── yt-dlp 옵션 ──────────────────────────────────────────
 YDL_OPTS = {
     'format': 'bestaudio/best',
@@ -240,8 +247,8 @@ async def _sync_announcements_to_viewer():
     if not msgs:
         return 0
     items = [
-        {"title": m.content.splitlines()[0][:80],
-         "body": "\n".join(m.content.splitlines()[1:]).strip(),
+        {"title": clean_discord_mentions(m.content.splitlines()[0])[:80],
+         "body": clean_discord_mentions("\n".join(m.content.splitlines()[1:]).strip()),
          "at": int(m.created_at.timestamp() * 1000)}
         for m in reversed(msgs)
     ]
@@ -332,8 +339,8 @@ async def _sync_announce_to_viewer(message: discord.Message):
     if not VIEWER_SERVER_URL:
         return
     lines = message.content.strip().splitlines()
-    title = lines[0][:80] if lines else "(공지)"
-    body = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+    title = clean_discord_mentions(lines[0])[:80] if lines else "(공지)"
+    body = clean_discord_mentions("\n".join(lines[1:]).strip()) if len(lines) > 1 else ""
     payload = json.dumps({"title": title, "body": body, "prize": ""}).encode("utf-8")
     url = f"{VIEWER_SERVER_URL}/api/admin/announce"
     try:
