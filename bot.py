@@ -1046,6 +1046,14 @@ async def handle_config_preview(request: web.Request):
     except Exception as e:
         return web.Response(text=f"오류: {e}", status=500)
 
+async def handle_sync_announcements_api(request: web.Request) -> web.Response:
+    """뷰어 서버 시작 시 공지 동기화 요청 엔드포인트"""
+    try:
+        count = await _sync_announcements_to_viewer()
+        return web.json_response({"ok": True, "count": count})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
 async def start_bot_api():
     global bot_api_runner
     if bot_api_runner is not None:
@@ -1059,6 +1067,7 @@ async def start_bot_api():
     app.router.add_post("/api/bot-command", handle_bot_command_api)
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
     app.router.add_post("/api/move-voice-teams-multi", handle_move_voice_teams_multi_api)
+    app.router.add_post("/api/sync-announcements", handle_sync_announcements_api)
     bot_api_runner = web.AppRunner(app)
     await bot_api_runner.setup()
     site = web.TCPSite(bot_api_runner, "0.0.0.0", BOT_API_PORT)
