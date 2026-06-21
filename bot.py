@@ -250,7 +250,7 @@ async def _sync_announcements_to_viewer():
         {"title": clean_discord_mentions(m.content.splitlines()[0])[:80],
          "body": clean_discord_mentions("\n".join(m.content.splitlines()[1:]).strip()),
          "at": int(m.created_at.timestamp() * 1000)}
-        for m in reversed(msgs)
+        for m in msgs  # 최신순 (Discord history 기본값)
     ]
     url = f"{VIEWER_SERVER_URL}/api/admin/announcements/reset"
     async with aiohttp.ClientSession() as session:
