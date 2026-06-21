@@ -13,6 +13,7 @@ import urllib.error
 import yt_dlp
 from gtts import gTTS
 import tempfile
+import aiohttp
 from aiohttp import web
 
 # ── config 로드 ──────────────────────────────────────────
@@ -229,29 +230,46 @@ async def on_ready():
     # 공지 채널 최신 메시지 → 뷰어 서버 동기화
     asyncio.create_task(_sync_announcements_on_ready())
 
-async def _sync_announcements_on_ready():
-    """봇 시작 시 공지 채널 최근 10개 → 뷰어 서버 공지사항 복원"""
+async def _sync_announcements_to_viewer():
+    """공지 채널 최근 10개 → 뷰어 서버 동기화 (aiohttp 사용)"""
     if not VIEWER_SERVER_URL:
-        return
+        print("[ANNOUNCE] VIEWER_SERVER_URL 미설정, 스킵")
+        return 0
+    ch = bot.get_channel(ANNOUNCE_CHANNEL_ID) or await bot.fetch_channel(ANNOUNCE_CHANNEL_ID)
+    msgs = [m async for m in ch.history(limit=10) if not m.author.bot and m.content.strip()]
+    if not msgs:
+        return 0
+    items = [
+        {"title": m.content.splitlines()[0][:80],
+         "body": "\n".join(m.content.splitlines()[1:]).strip(),
+         "at": int(m.created_at.timestamp() * 1000)}
+        for m in reversed(msgs)
+    ]
+    url = f"{VIEWER_SERVER_URL}/api/admin/announcements/reset"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=items,
+                headers={"x-admin-secret": VIEWER_SERVER_SECRET}, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            result = await resp.json()
+            print(f"[ANNOUNCE] 공지 {len(msgs)}개 동기화: {result}")
+            return len(msgs)
+
+async def _sync_announcements_on_ready():
     try:
-        ch = bot.get_channel(ANNOUNCE_CHANNEL_ID) or await bot.fetch_channel(ANNOUNCE_CHANNEL_ID)
-        msgs = [m async for m in ch.history(limit=10) if not m.author.bot and m.content.strip()]
-        if not msgs:
-            return
-        # 뷰어 서버 공지사항 초기화 후 재등록
-        url = f"{VIEWER_SERVER_URL}/api/admin/announcements/reset"
-        payload = json.dumps([
-            {"title": m.content.splitlines()[0][:80],
-             "body": "\n".join(m.content.splitlines()[1:]).strip(),
-             "at": int(m.created_at.timestamp() * 1000)}
-            for m in reversed(msgs)  # 오래된 것부터
-        ]).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, method="POST",
-            headers={"Content-Type": "application/json", "x-admin-secret": VIEWER_SERVER_SECRET})
-        urllib.request.urlopen(req, timeout=5)
-        print(f"[ANNOUNCE] 공지 {len(msgs)}개 뷰어 서버 동기화 완료")
+        await _sync_announcements_to_viewer()
     except Exception as e:
         print(f"[ANNOUNCE] 시작 시 동기화 실패: {e}")
+
+@tree.command(name="공지동기화", description="디스코드 공지 채널 → 뷰어 플랫폼 즉시 동기화 (관리자 전용)")
+async def sync_announcements_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        count = await _sync_announcements_to_viewer()
+        await interaction.followup.send(f"✅ 공지 {count}개 동기화 완료", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ 동기화 실패: {e}", ephemeral=True)
 
 @bot.command(name="sync")
 async def sync_commands(ctx):
