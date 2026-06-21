@@ -249,7 +249,8 @@ async def _sync_announcements_to_viewer():
     items = [
         {"title": clean_discord_mentions(m.content.splitlines()[0])[:80],
          "body": clean_discord_mentions("\n".join(m.content.splitlines()[1:]).strip()),
-         "at": int(m.created_at.timestamp() * 1000)}
+         "at": int(m.created_at.timestamp() * 1000),
+         "msg_id": str(m.id)}
         for m in msgs  # 최신순 (Discord history 기본값)
     ]
     url = f"{VIEWER_SERVER_URL}/api/admin/announcements/reset"
@@ -341,7 +342,8 @@ async def _sync_announce_to_viewer(message: discord.Message):
     lines = message.content.strip().splitlines()
     title = clean_discord_mentions(lines[0])[:80] if lines else "(공지)"
     body = clean_discord_mentions("\n".join(lines[1:]).strip()) if len(lines) > 1 else ""
-    payload = json.dumps({"title": title, "body": body, "prize": ""}).encode("utf-8")
+    msg_id = str(message.id)
+    payload = json.dumps({"title": title, "body": body, "prize": "", "msg_id": msg_id}).encode("utf-8")
     url = f"{VIEWER_SERVER_URL}/api/admin/announce"
     try:
         req = urllib.request.Request(url, data=payload, method="POST",
@@ -349,6 +351,20 @@ async def _sync_announce_to_viewer(message: discord.Message):
         urllib.request.urlopen(req, timeout=5)
     except Exception as e:
         print(f"[ANNOUNCE] 뷰어 서버 전송 실패: {e}")
+
+@bot.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    if payload.channel_id != ANNOUNCE_CHANNEL_ID or not VIEWER_SERVER_URL:
+        return
+    try:
+        url = f"{VIEWER_SERVER_URL}/api/admin/announcements/delete"
+        data = json.dumps({"msg_id": str(payload.message_id)}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST",
+            headers={"Content-Type": "application/json", "x-admin-secret": VIEWER_SERVER_SECRET})
+        urllib.request.urlopen(req, timeout=5)
+        print(f"[ANNOUNCE] 공지 삭제: {payload.message_id}")
+    except Exception as e:
+        print(f"[ANNOUNCE] 삭제 실패: {e}")
 
 @bot.event
 async def on_message(message):
