@@ -1049,8 +1049,9 @@ async def handle_config_preview(request: web.Request):
 async def handle_get_announcements_api(request: web.Request) -> web.Response:
     """Discord 공지 채널 최근 메시지를 직접 반환 (파일 저장 불필요)"""
     try:
+        limit = min(int(request.rel_url.query.get('limit', 10)), 100)
         ch = bot.get_channel(ANNOUNCE_CHANNEL_ID) or await bot.fetch_channel(ANNOUNCE_CHANNEL_ID)
-        msgs = [m async for m in ch.history(limit=10) if not m.author.bot and m.content.strip()]
+        msgs = [m async for m in ch.history(limit=limit) if not m.author.bot and m.content.strip()]
         items = [
             {"title": clean_discord_mentions(m.content.splitlines()[0])[:80],
              "body": clean_discord_mentions("\n".join(m.content.splitlines()[1:]).strip()),
