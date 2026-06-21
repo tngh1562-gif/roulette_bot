@@ -1046,6 +1046,22 @@ async def handle_config_preview(request: web.Request):
     except Exception as e:
         return web.Response(text=f"오류: {e}", status=500)
 
+async def handle_get_announcements_api(request: web.Request) -> web.Response:
+    """Discord 공지 채널 최근 메시지를 직접 반환 (파일 저장 불필요)"""
+    try:
+        ch = bot.get_channel(ANNOUNCE_CHANNEL_ID) or await bot.fetch_channel(ANNOUNCE_CHANNEL_ID)
+        msgs = [m async for m in ch.history(limit=10) if not m.author.bot and m.content.strip()]
+        items = [
+            {"title": clean_discord_mentions(m.content.splitlines()[0])[:80],
+             "body": clean_discord_mentions("\n".join(m.content.splitlines()[1:]).strip()),
+             "at": int(m.created_at.timestamp() * 1000),
+             "msg_id": str(m.id)}
+            for m in msgs
+        ]
+        return web.json_response({"ok": True, "items": items})
+    except Exception as e:
+        return web.json_response({"ok": False, "items": [], "error": str(e)})
+
 async def handle_sync_announcements_api(request: web.Request) -> web.Response:
     """뷰어 서버 시작 시 공지 동기화 요청 엔드포인트"""
     try:
@@ -1068,6 +1084,7 @@ async def start_bot_api():
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
     app.router.add_post("/api/move-voice-teams-multi", handle_move_voice_teams_multi_api)
     app.router.add_post("/api/sync-announcements", handle_sync_announcements_api)
+    app.router.add_get("/api/announcements", handle_get_announcements_api)
     bot_api_runner = web.AppRunner(app)
     await bot_api_runner.setup()
     site = web.TCPSite(bot_api_runner, "0.0.0.0", BOT_API_PORT)
