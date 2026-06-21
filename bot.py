@@ -226,6 +226,32 @@ async def on_ready():
             print(f"  - /{cmd.name}")
     except Exception as e:
         print(f"명령어 동기화 실패: {e}")
+    # 공지 채널 최신 메시지 → 뷰어 서버 동기화
+    asyncio.create_task(_sync_announcements_on_ready())
+
+async def _sync_announcements_on_ready():
+    """봇 시작 시 공지 채널 최근 10개 → 뷰어 서버 공지사항 복원"""
+    if not VIEWER_SERVER_URL:
+        return
+    try:
+        ch = bot.get_channel(ANNOUNCE_CHANNEL_ID) or await bot.fetch_channel(ANNOUNCE_CHANNEL_ID)
+        msgs = [m async for m in ch.history(limit=10) if not m.author.bot and m.content.strip()]
+        if not msgs:
+            return
+        # 뷰어 서버 공지사항 초기화 후 재등록
+        url = f"{VIEWER_SERVER_URL}/api/admin/announcements/reset"
+        payload = json.dumps([
+            {"title": m.content.splitlines()[0][:80],
+             "body": "\n".join(m.content.splitlines()[1:]).strip(),
+             "at": int(m.created_at.timestamp() * 1000)}
+            for m in reversed(msgs)  # 오래된 것부터
+        ]).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST",
+            headers={"Content-Type": "application/json", "x-admin-secret": VIEWER_SERVER_SECRET})
+        urllib.request.urlopen(req, timeout=5)
+        print(f"[ANNOUNCE] 공지 {len(msgs)}개 뷰어 서버 동기화 완료")
+    except Exception as e:
+        print(f"[ANNOUNCE] 시작 시 동기화 실패: {e}")
 
 @bot.command(name="sync")
 async def sync_commands(ctx):
