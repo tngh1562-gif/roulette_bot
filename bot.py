@@ -15,6 +15,7 @@ from gtts import gTTS
 import tempfile
 import aiohttp
 from aiohttp import web
+import aiohttp
 
 # ── config 로드 ──────────────────────────────────────────
 DEFAULT_CONFIG_PATH = "config.json"
@@ -64,7 +65,7 @@ BOT_API_PORT = int(os.getenv("BOT_API_PORT") or os.getenv("PORT") or "8080")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1507737564633891047"))
 ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "1488511038881271860"))
 VIEWER_SERVER_URL = os.getenv("VIEWER_SERVER_URL", "").rstrip("/")
-VIEWER_SERVER_SECRET = os.getenv("VIEWER_SERVER_SECRET", "davido-admin")
+VIEWER_SERVER_SECRET = os.getenv("VIEWER_SERVER_SECRET", "")
 
 def clean_discord_mentions(text: str) -> str:
     """<@&숫자> <@숫자> <#숫자> 등 Discord 멘션 제거"""
@@ -232,6 +233,8 @@ async def on_ready():
         command_sync_done = True
         for cmd in synced:
             print(f"  - /{cmd.name}")
+        # 치지직 채팅 인증 리스너 시작
+        asyncio.create_task(chzzk_chat_listener())
     except Exception as e:
         print(f"명령어 동기화 실패: {e}")
     # 공지 채널 최신 메시지 → 뷰어 서버 동기화
@@ -2418,6 +2421,150 @@ async def level_block_guild(interaction: discord.Interaction):
         f"{status} — 이 서버에서 XP 획득/레벨업이 **{'정지' if '정지' in status else '재개'}**됐습니다.",
         ephemeral=True,
     )
+
+
+# ══════════════════════════════════════════════════════════
+# 치지직 채팅 인증 리스너
+# ══════════════════════════════════════════════════════════
+CHZZK_CHANNEL_ID = os.getenv("CHZZK_CHANNEL_ID", "")   # 치지직 채널 ID (환경변수)
+VIEWER_API_URL   = os.getenv("VIEWER_API_URL", "https://davido-viewer-production.up.railway.app")
+VIEWER_API_SECRET = os.getenv("VIEWER_API_SECRET", "")
+
+AUTH_CMD = re.compile(r'^!인증\s+([A-Z0-9]{5})$', re.IGNORECASE)
+
+async def chzzk_get_chat_channel_id(channel_id: str) -> str:
+    """스트리머 채널 ID → 채팅 채널 ID 조회 (라이브 또는 채널 정보에서)"""
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    # 1) 라이브 중일 때
+    url_live = f"https://api.chzzk.naver.com/service/v2/channels/{channel_id}/live-detail"
+    async with aiohttp.ClientSession() as s:
+        async with s.get(url_live, headers=headers) as r:
+            if r.status == 200:
+                data = await r.json()
+                chat_id = (data.get("content") or {}).get("chatChannelId", "")
+                if chat_id:
+                    return chat_id
+        # 2) 오프라인이면 채널 정보에서
+        url_ch = f"https://api.chzzk.naver.com/service/v1/channels/{channel_id}"
+        async with s.get(url_ch, headers=headers) as r:
+            if r.status == 200:
+                data = await r.json()
+                chat_id = (data.get("content") or {}).get("chatChannelId", "")
+                if chat_id:
+                    return chat_id
+    return channel_id  # fallback: 채널 ID 그대로 사용
+
+async def chzzk_get_access_token(chat_channel_id: str) -> tuple[str, str]:
+    """채팅 채널 ID로 접속 토큰 발급"""
+    url = f"https://comm-api.game.naver.com/nng_main/v1/chats/access-token?channelId={chat_channel_id}&chatType=STREAMING"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    async with aiohttp.ClientSession() as s:
+        async with s.get(url, headers=headers) as r:
+            if r.status != 200:
+                raise Exception(f"토큰 발급 실패: HTTP {r.status}")
+            data = await r.json()
+            content = data.get("content", {})
+            return content.get("accessToken", ""), content.get("extraToken", "")
+
+async def chzzk_chat_listener():
+    """치지직 채팅 WebSocket 연결 및 !인증 명령어 처리"""
+    if not CHZZK_CHANNEL_ID:
+        print("[chzzk] CHZZK_CHANNEL_ID 환경변수가 없어 채팅 리스너를 건너뜁니다.")
+        return
+
+    while True:
+        try:
+            chat_channel_id = await chzzk_get_chat_channel_id(CHZZK_CHANNEL_ID)
+            print(f"[chzzk] chat_channel_id: {chat_channel_id}")
+            access_token, extra_token = await chzzk_get_access_token(chat_channel_id)
+            if not access_token:
+                print("[chzzk] 토큰 발급 실패, 30초 후 재시도...")
+                await asyncio.sleep(30)
+                continue
+
+            server_no = random.randint(1, 5)
+            ws_url = f"wss://kr-ss{server_no}.chat.naver.com/chat"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(
+                    ws_url,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    protocols=["chat"]
+                ) as ws:
+                    print(f"[chzzk] 채팅 서버 연결됨 (kr-ss{server_no})")
+
+                    connect_msg = json.dumps({
+                        "bdy": {
+                            "accTkn": access_token,
+                            "auth": "READ",
+                            "devType": 2001,
+                            "uid": None
+                        },
+                        "cmd": 100,
+                        "cid": chat_channel_id,
+                        "svcid": "game",
+                        "ver": "2"
+                    })
+                    await ws.send_str(connect_msg)
+
+                    # PING 태스크 (30초마다)
+                    async def ping_loop():
+                        while not ws.closed:
+                            await asyncio.sleep(30)
+                            try:
+                                await ws.send_str(json.dumps({"cmd": 0, "ver": "2"}))
+                            except Exception:
+                                break
+
+                    asyncio.create_task(ping_loop())
+
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        try:
+                            data = json.loads(msg.data)
+                        except Exception:
+                            continue
+
+                        cmd = data.get("cmd")
+
+                        # 채팅 메시지 (93101)
+                        if cmd == 93101:
+                            for chat in data.get("bdy", []):
+                                text    = chat.get("msg", "").strip()
+                                profile = json.loads(chat.get("profile", "{}")) if isinstance(chat.get("profile"), str) else chat.get("profile", {})
+                                nickname = profile.get("nickname", "")
+
+                                m = AUTH_CMD.match(text)
+                                if not m or not nickname:
+                                    continue
+
+                                code = m.group(1).upper()
+                                print(f"[chzzk] !인증 감지: {nickname} → {code}")
+
+                                # viewer 서버에 확인 요청
+                                try:
+                                    async with aiohttp.ClientSession() as s:
+                                        async with s.post(
+                                            f"{VIEWER_API_URL}/api/auth/confirm",
+                                            json={"token": code, "name": nickname},
+                                            headers={"x-admin-secret": VIEWER_API_SECRET},
+                                            timeout=aiohttp.ClientTimeout(total=5)
+                                        ) as r:
+                                            result = await r.json()
+                                    if result.get("ok"):
+                                        print(f"[chzzk] ✅ {nickname} 인증 완료")
+                                    else:
+                                        err = result.get('error', '')
+                                        print(f"[chzzk] ❌ {nickname} 인증 실패: {err}")
+                                        if '사용할 수 없는 닉네임' in err:
+                                            print(f"[chzzk] ⚠️ {nickname} — 예약 닉네임 사칭 시도 차단됨")
+                                except Exception as e:
+                                    print(f"[chzzk] confirm 오류: {e}")
+
+        except Exception as e:
+            print(f"[chzzk] 연결 오류: {e}, 10초 후 재연결...")
+            await asyncio.sleep(10)
 
 
 # ── 실행 ─────────────────────────────────────────────────
