@@ -2534,20 +2534,22 @@ async def chzzk_chat_listener():
                                 text    = chat.get("msg", "").strip()
                                 profile = json.loads(chat.get("profile", "{}")) if isinstance(chat.get("profile"), str) else chat.get("profile", {})
                                 nickname = profile.get("nickname", "")
+                                # 닉네임이 바뀌어도 변하지 않는 영구 고유 ID
+                                chzzk_uid = profile.get("userIdHash", "") or chat.get("uid", "") or chat.get("userId", "")
 
                                 m = AUTH_CMD.match(text)
                                 if not m or not nickname:
                                     continue
 
                                 code = m.group(1).upper()
-                                print(f"[chzzk] !인증 감지: {nickname} → {code}")
+                                print(f"[chzzk] !인증 감지: {nickname} (uid:{chzzk_uid[:8] if chzzk_uid else '?'}...) → {code}")
 
                                 # viewer 서버에 확인 요청
                                 try:
                                     async with aiohttp.ClientSession() as s:
                                         async with s.post(
                                             f"{VIEWER_API_URL}/api/auth/confirm",
-                                            json={"token": code, "name": nickname},
+                                            json={"token": code, "name": nickname, "chzzkUid": chzzk_uid},
                                             headers={"x-admin-secret": VIEWER_API_SECRET},
                                             timeout=aiohttp.ClientTimeout(total=5)
                                         ) as r:
