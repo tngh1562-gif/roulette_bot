@@ -903,8 +903,10 @@ async def handle_bot_command_api(request: web.Request):
             if not target:
                 return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다."})
             counts = target.get("counts", {})
+            # rewards 목록 + counts에 있는 모든 아이템 합산 (shop_grant로 추가된 아이템 포함)
             rewards = target.get("rewards", cfg.get("rewards", []))
-            items = [{"name": r, "count": counts.get(r, 0)} for r in rewards if counts.get(r, 0) > 0]
+            all_names = list(dict.fromkeys(rewards + list(counts.keys())))  # 중복 제거, 순서 유지
+            items = [{"name": r, "count": counts.get(r, 0)} for r in all_names if counts.get(r, 0) > 0]
             return web.json_response({"ok": True, "items": items})
 
         elif command == "유저목록":
