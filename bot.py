@@ -889,12 +889,23 @@ async def handle_bot_command_api(request: web.Request):
             counts = target.get("counts", {})
             rewards = target.get("rewards", cfg.get("rewards", []))
             sponsor = target.get("sponsor_rewards", cfg.get("sponsor_rewards", []))
-            lines = [f"📦 {닙네임}님의 보관함"]
+            lines = [f"📦 {닉네임}님의 보관함"]
             lines += [f"• {r}: {counts.get(r, 0)}개" for r in rewards]
             if sponsor:
                 lines += ["\n🎁 후원 보상"]
                 lines += [f"• {r}: {counts.get(r, 0)}개" for r in sponsor]
             return web.json_response({"ok": True, "message": "\n".join(lines)})
+
+        elif command == "보관함조회":
+            # JSON 형식으로 보관함 반환 (전당포용)
+            닉네임 = str(opts.get("닉네임", "")).strip()
+            target = next((u for u in cfg.get("users", []) if u["name"] == 닉네임), None)
+            if not target:
+                return web.json_response({"ok": False, "error": f"유저 `{닉네임}` 를 찾을 수 없습니다."})
+            counts = target.get("counts", {})
+            rewards = target.get("rewards", cfg.get("rewards", []))
+            items = [{"name": r, "count": counts.get(r, 0)} for r in rewards if counts.get(r, 0) > 0]
+            return web.json_response({"ok": True, "items": items})
 
         elif command == "유저목록":
             users = cfg.get("users", [])
