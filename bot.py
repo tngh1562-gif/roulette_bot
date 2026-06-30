@@ -2437,6 +2437,81 @@ async def level_block_guild(interaction: discord.Interaction):
 
 
 # ══════════════════════════════════════════════════════════
+# /라인업 ─ 팀 라인업 등록 + 팀 채널 전달
+# ══════════════════════════════════════════════════════════
+LINEUP_POSITIONS = ["탑", "정글", "미드", "원딜", "서폿"]
+# 전달 대상 팀 커뮤니티 채팅방 채널 ID — 직접 채워넣어 주세요 (1팀, 2팀, 3팀, 4팀 순서)
+LINEUP_TEAM_CHANNEL_IDS = [
+    1514998460015968417,  # 1팀
+    1514998497399800019,  # 2팀
+    1514998544514416670,  # 3팀
+    1514998586629292062,  # 4팀
+]
+
+def build_lineup_embed(lineup: dict) -> discord.Embed:
+    embed = discord.Embed(title="라인업", color=0x5865F2)
+    lines = [f"**{pos}** - {lineup.get(pos) or '미입력'}" for pos in LINEUP_POSITIONS]
+    embed.description = "\n".join(lines)
+    return embed
+
+class LineupNicknameModal(discord.ui.Modal):
+    nickname = discord.ui.TextInput(label="롤 닉네임", placeholder="예: dabido#kr2", max_length=80)
+
+    def __init__(self, lineup_view: "LineupView", position: str):
+        super().__init__(title=f"{position} 라인 등록")
+        self.lineup_view = lineup_view
+        self.position = position
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.lineup_view.lineup[self.position] = str(self.nickname.value).strip()
+        await interaction.response.edit_message(
+            embed=build_lineup_embed(self.lineup_view.lineup), view=self.lineup_view
+        )
+
+class LineupPositionButton(discord.ui.Button):
+    def __init__(self, position: str):
+        super().__init__(label=position, style=discord.ButtonStyle.primary, row=0)
+        self.position = position
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(LineupNicknameModal(self.view, self.position))
+
+class LineupForwardButton(discord.ui.Button):
+    def __init__(self, team_idx: int):
+        super().__init__(label=f"{team_idx + 1}팀전달", style=discord.ButtonStyle.secondary, row=1)
+        self.team_idx = team_idx
+
+    async def callback(self, interaction: discord.Interaction):
+        channel_id = LINEUP_TEAM_CHANNEL_IDS[self.team_idx] if self.team_idx < len(LINEUP_TEAM_CHANNEL_IDS) else 0
+        if not channel_id:
+            await interaction.response.send_message(
+                f"⚠️ {self.team_idx + 1}팀 채널 ID가 설정되지 않았습니다. LINEUP_TEAM_CHANNEL_IDS를 채워주세요.",
+                ephemeral=True,
+            )
+            return
+        channel = interaction.client.get_channel(channel_id)
+        if not channel:
+            await interaction.response.send_message(f"⚠️ {self.team_idx + 1}팀 채널을 찾을 수 없습니다.", ephemeral=True)
+            return
+        await channel.send(embed=build_lineup_embed(self.view.lineup))
+        await interaction.response.send_message(f"✅ {self.team_idx + 1}팀 채널로 라인업을 전달했습니다.", ephemeral=True)
+
+class LineupView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.lineup = {}
+        for pos in LINEUP_POSITIONS:
+            self.add_item(LineupPositionButton(pos))
+        for i in range(4):
+            self.add_item(LineupForwardButton(i))
+
+@tree.command(name="라인업", description="팀 라인업을 등록하고 팀 채널로 전달합니다.")
+async def lineup_command(interaction: discord.Interaction):
+    view = LineupView()
+    await interaction.response.send_message(embed=build_lineup_embed(view.lineup), view=view)
+
+
+# ══════════════════════════════════════════════════════════
 # 치지직 채팅 인증 리스너
 # ══════════════════════════════════════════════════════════
 CHZZK_CHANNEL_ID = os.getenv("CHZZK_CHANNEL_ID", "")   # 치지직 채널 ID (환경변수)
