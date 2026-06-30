@@ -225,14 +225,15 @@ async def on_ready():
         return
     try:
         # 서버 전용 즉시 동기화 (전역은 최대 1시간 소요)
-        guild = discord.Object(id=1428066375334756354)
-        tree.copy_global_to(guild=guild)
-        synced = await tree.sync(guild=guild)
         print(f"봇 온라인: {bot.user} (ID: {bot.user.id})")
-        print(f"슬래시 명령어 전역 동기화 완료: {len(synced)}개")
+        for guild_id in (1428066375334756354, 1499390071688794283):  # bIscord, 다비도루묵
+            guild = discord.Object(id=guild_id)
+            tree.copy_global_to(guild=guild)
+            synced = await tree.sync(guild=guild)
+            print(f"슬래시 명령어 즉시 동기화 완료 (길드 {guild_id}): {len(synced)}개")
+            for cmd in synced:
+                print(f"  - /{cmd.name}")
         command_sync_done = True
-        for cmd in synced:
-            print(f"  - /{cmd.name}")
         # 치지직 채팅 인증 리스너 시작
         asyncio.create_task(chzzk_chat_listener())
     except Exception as e:
