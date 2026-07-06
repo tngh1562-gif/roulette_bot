@@ -811,6 +811,7 @@ async def handle_bot_command_api(request: web.Request):
             닉네임 = str(opts.get("닉네임", "")).strip()
             보상이름 = str(opts.get("보상이름", "")).strip()
             개수 = int(opts.get("개수", 0))
+            source = str(opts.get("source", "")).strip()
             if 개수 <= 0:
                 return web.json_response({"ok": False, "error": "개수는 1 이상이어야 합니다."})
             target, error = find_user_reward(cfg, 닉네임, 보상이름)
@@ -822,15 +823,18 @@ async def handle_bot_command_api(request: web.Request):
             counts[보상이름] = after
             save_config(cfg)
             result = await update_post_message(target, cfg)
-            asyncio.create_task(_send_discord_log(
-                f"📋 **[관리자 사이트]** `{닉네임}` **{보상이름} {개수}개 차감** ({before}→{after})"
-            ))
+            # 전당포 판매(pawn)·투표 자동차감(vote)은 로그 제외
+            if source not in ("pawn", "vote"):
+                asyncio.create_task(_send_discord_log(
+                    f"📋 **[관리자 사이트]** `{닉네임}` **{보상이름} {개수}개 차감** ({before}→{after})"
+                ))
             return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 ({개수}개 차감)\n포스트: {result}"})
 
         elif command == "추가":
             닉네임 = str(opts.get("닉네임", "")).strip()
             보상이름 = str(opts.get("보상이름", "")).strip()
             개수 = int(opts.get("개수", 0))
+            source = str(opts.get("source", "")).strip()
             if 개수 <= 0:
                 return web.json_response({"ok": False, "error": "개수는 1 이상이어야 합니다."})
 
@@ -855,8 +859,9 @@ async def handle_bot_command_api(request: web.Request):
             counts[보상이름] = after
             save_config(cfg)
             result = await update_post_message(target, cfg)
+            log_label = "⭐ **[구독 자동지급]**" if source == "subscription" else "📋 **[관리자 사이트]**"
             asyncio.create_task(_send_discord_log(
-                f"📋 **[관리자 사이트]** `{닉네임}` **{보상이름} {개수}개 추가** ({before}→{after})"
+                f"{log_label} `{닉네임}` **{보상이름} {개수}개 추가** ({before}→{after})"
             ))
             return web.json_response({"ok": True, "message": f"✅ `{닉네임}`{registered_note} 의 `{보상이름}` {before}개 → {after}개 ({개수}개 추가)\n포스트: {result}"})
 
@@ -877,9 +882,6 @@ async def handle_bot_command_api(request: web.Request):
             counts[보상이름] = after
             save_config(cfg)
             result = await update_post_message(target, cfg)
-            asyncio.create_task(_send_discord_log(
-                f"🛒 **[내전상점]** `{닉네임}` **{보상이름} {개수}개 지급** ({before}→{after})"
-            ))
             return web.json_response({"ok": True, "message": f"✅ `{닉네임}` 의 `{보상이름}` {before}개 → {after}개 (상점 지급)\n포스트: {result}"})
 
         elif command == "보상현황":
