@@ -859,7 +859,12 @@ async def handle_bot_command_api(request: web.Request):
             counts[보상이름] = after
             save_config(cfg)
             result = await update_post_message(target, cfg)
-            log_label = "⭐ **[구독 자동지급]**" if source == "subscription" else "📋 **[관리자 사이트]**"
+            if source == "subscription":
+                log_label = "⭐ **[구독 자동지급]**"
+            elif source == "roulette":
+                log_label = "🎡 **[룰렛 자동지급]**"
+            else:
+                log_label = "📋 **[관리자 사이트]**"
             asyncio.create_task(_send_discord_log(
                 f"{log_label} `{닉네임}` **{보상이름} {개수}개 추가** ({before}→{after})"
             ))
