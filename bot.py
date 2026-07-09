@@ -1643,6 +1643,8 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
 
     users_by_name = sorted(users, key=lambda u: len(u.get("name", "")), reverse=True)
     added = {}
+    new_users_created = []
+    new_users_failed = []
     record_starts = {"치즈", "구독"}
     blocks = []
     current_block = []
@@ -1665,7 +1667,20 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
             None,
         )
         if not matched_user:
-            continue
+            # 신규 유저 감지: "치즈"/"구독"도 아니고 "("로 시작하지도 않는 첫 번째 줄이 닉네임
+            candidate_nick = next(
+                (line for line in block if line not in record_starts and not line.startswith("(")),
+                None,
+            )
+            if not candidate_nick:
+                continue
+            matched_user, create_error = await create_user_post(cfg, candidate_nick)
+            if create_error or not matched_user:
+                new_users_failed.append(f"❌ `{candidate_nick}` 보관함 생성 실패: {create_error}")
+                continue
+            new_users_created.append(candidate_nick)
+            # users_by_name 갱신 (이후 블록에서 같은 닉네임 매칭 가능하도록)
+            users_by_name = sorted(cfg.get("users", []), key=lambda u: len(u.get("name", "")), reverse=True)
 
         available_rewards = list(dict.fromkeys(
             matched_user.get("rewards", cfg.get("rewards", [])) +
@@ -1681,7 +1696,7 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
                 matched_user.setdefault("counts", {})[reward] = matched_user.setdefault("counts", {}).get(reward, 0) + count
                 added.setdefault(matched_user["name"], {})[reward] = added.setdefault(matched_user["name"], {}).get(reward, 0) + count
 
-    if not added:
+    if not added and not new_users_created and not new_users_failed:
         await interaction.followup.send(
             "추가할 보상을 찾지 못했습니다.\n위플랩 표에서 이름과 룰렛 보상명이 같이 포함되도록 복사해서 붙여넣어 주세요.",
             ephemeral=True,
@@ -1690,8 +1705,11 @@ async def bulk_add_rewards(interaction: discord.Interaction, 내용: str):
 
     save_config(cfg)
     lines = []
+    if new_users_created:
+        lines.append(f"🆕 **신규 보관함 자동 생성**: {', '.join(new_users_created)}")
+    lines += new_users_failed
     for user_name, rewards in added.items():
-        target = next(u for u in users if u["name"] == user_name)
+        target = next(u for u in cfg.get("users", []) if u["name"] == user_name)
         result = await update_post_message(target, cfg)
         reward_text = ", ".join(f"{name} +{count}" for name, count in rewards.items())
         lines.append(f"• {user_name}: {reward_text} — {result}")
