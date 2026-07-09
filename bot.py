@@ -1548,7 +1548,7 @@ async def delete_user(interaction: discord.Interaction, 닉네임: str):
     await interaction.response.send_message(f"✅ `{닉네임}` 삭제 완료", ephemeral=True)
 
 # ── /자동등록 ──────────────────────────────────────────────
-FORUM_CHANNEL_ID = 1491054022877253642
+FORUM_CHANNEL_ID = 1488511259644268554
 
 @tree.command(name="자동등록", description="포스트 채널의 스레드를 자동 스캔해서 유저 목록을 등록합니다.")
 async def auto_register(interaction: discord.Interaction):
