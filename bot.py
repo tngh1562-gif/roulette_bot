@@ -181,9 +181,12 @@ async def _send_discord_log(content: str):
 
 # ── 신규 유저 자동 등록 (포스트 생성 + config 등록) ──────────
 async def create_user_post(cfg: dict, 닉네임: str):
+    print(f"[CREATE_USER] 신규 유저 포스트 생성 시도: '{닉네임}' (FORUM_CHANNEL_ID={FORUM_CHANNEL_ID})")
     try:
         forum = await bot.fetch_channel(FORUM_CHANNEL_ID)
+        print(f"[CREATE_USER] 채널 조회 성공: {forum} (type={type(forum).__name__})")
     except Exception as e:
+        print(f"[CREATE_USER] ❌ 채널 조회 실패: {e}")
         return None, f"포스트 채널 조회 실패: {e}"
 
     new_user = {
@@ -197,7 +200,9 @@ async def create_user_post(cfg: dict, 닉네임: str):
         created = await forum.create_thread(name=닉네임, embed=embed)
         new_user["thread_id"] = str(created.thread.id)
         new_user["message_id"] = str(created.message.id)
+        print(f"[CREATE_USER] ✅ 포스트 생성 완료: thread_id={new_user['thread_id']}")
     except Exception as e:
+        print(f"[CREATE_USER] ❌ 포스트 생성 실패: {e}")
         return None, f"포스트 생성 실패: {e}"
 
     cfg.setdefault("users", []).append(new_user)
@@ -1095,12 +1100,26 @@ async def handle_sync_announcements_api(request: web.Request) -> web.Response:
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+async def handle_diagnose_forum(request: web.Request):
+    """FORUM_CHANNEL_ID 접근 가능 여부 진단"""
+    result = {"forum_channel_id": FORUM_CHANNEL_ID, "bot_ready": bot.is_ready()}
+    try:
+        ch = await bot.fetch_channel(FORUM_CHANNEL_ID)
+        result["channel_name"] = ch.name
+        result["channel_type"] = type(ch).__name__
+        result["channel_ok"] = True
+    except Exception as e:
+        result["channel_ok"] = False
+        result["channel_error"] = str(e)
+    return web.json_response(result)
+
 async def start_bot_api():
     global bot_api_runner
     if bot_api_runner is not None:
         return
     app = web.Application()
     app.router.add_get("/health", lambda request: web.json_response({"ok": True}))
+    app.router.add_get("/api/diagnose-forum", handle_diagnose_forum)
     app.router.add_get("/api/config", handle_get_config_api)
     app.router.add_post("/api/send-channel-message", handle_send_channel_message)
     app.router.add_get("/config-preview", handle_config_preview)
