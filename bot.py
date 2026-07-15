@@ -752,6 +752,40 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
     auction_channel_ids = {int(ch) for ch in prev_map}
     auction_channel_ids |= {team["channel"].id for team in teams}
 
+    async def _move_one(team_name, channel, role, member_id):
+        try:
+            member = guild.get_member(member_id) or await guild.fetch_member(member_id)
+        except Exception as e:
+            return ("skip", team_name, member_id, str(e))
+        current = getattr(getattr(member, "voice", None), "channel", None)
+        try:
+            if current and current.id == channel.id:
+                pass  # 이미 목적 채널
+            elif current and (current.id == lobby.id or current.id in auction_channel_ids):
+                await member.move_to(channel, reason="경매 결과 - 팀 음성채널 이동")
+            else:
+                return ("skip", team_name, member_id, "not_in_lobby")
+        except discord.Forbidden:
+            return ("skip", team_name, member_id, "missing_permission")
+        except Exception as e:
+            return ("skip", team_name, member_id, str(e))
+        if role:
+            try:
+                remove_roles = [r for r in all_roles if r.id != role.id and r in member.roles]
+                if remove_roles:
+                    await member.remove_roles(*remove_roles, reason="경매 결과 - 팀 변경")
+                if role not in member.roles:
+                    await member.add_roles(role, reason="경매 결과 - 팀 역할 부여")
+            except discord.Forbidden:
+                asyncio.create_task(_send_discord_log(
+                    f"⚠️ 경매 팀 역할 지급/회수 실패 (권한 부족 - 봇 역할이 `{role.name}`보다 위에 있는지 확인하세요): {member.display_name}"
+                ))
+            except Exception as e:
+                asyncio.create_task(_send_discord_log(f"⚠️ 경매 팀 역할 지급/회수 실패 ({member.display_name}): {e}"))
+        return ("moved", team_name, member_id, None)
+
+    # 중복 체크 후 전체 멤버를 gather로 동시 처리
+    tasks = []
     for team in teams:
         moved[team["name"]] = 0
         for member_id in team["members"]:
@@ -759,40 +793,17 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
                 skipped.append({"discordId": str(member_id), "reason": "duplicate_team_assignment"})
                 continue
             seen.add(member_id)
-            try:
-                member = guild.get_member(member_id) or await guild.fetch_member(member_id)
-            except Exception as e:
-                skipped.append({"discordId": str(member_id), "reason": str(e)})
-                continue
+            tasks.append(_move_one(team["name"], team["channel"], team["role"], member_id))
 
-            current = getattr(getattr(member, "voice", None), "channel", None)
-            try:
-                if current and current.id == team["channel"].id:
-                    moved[team["name"]] += 1
-                elif current and (current.id == lobby.id or current.id in auction_channel_ids):
-                    await member.move_to(team["channel"], reason="경매 결과 - 팀 음성채널 이동")
-                    moved[team["name"]] += 1
-                else:
-                    skipped.append({"discordId": str(member_id), "reason": "not_in_lobby"})
-            except discord.Forbidden:
-                skipped.append({"discordId": str(member_id), "reason": "missing_permission"})
-            except Exception as e:
-                skipped.append({"discordId": str(member_id), "reason": str(e)})
-
-            if team["role"]:
-                try:
-                    remove_roles = [r for r in all_roles if r.id != team["role"].id and r in member.roles]
-                    if remove_roles:
-                        await member.remove_roles(*remove_roles, reason="경매 결과 - 팀 변경")
-                    if team["role"] not in member.roles:
-                        await member.add_roles(team["role"], reason="경매 결과 - 팀 역할 부여")
-                except discord.Forbidden:
-                    skipped.append({"discordId": str(member_id), "reason": "role_missing_permission"})
-                    asyncio.create_task(_send_discord_log(
-                        f"⚠️ 경매 팀 역할 지급/회수 실패 (권한 부족 - 봇 역할이 `{team['role'].name}`보다 위에 있는지 확인하세요): {member.display_name}"
-                    ))
-                except Exception as e:
-                    asyncio.create_task(_send_discord_log(f"⚠️ 경매 팀 역할 지급/회수 실패 ({member.display_name}): {e}"))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, Exception):
+            continue
+        status, team_name, member_id, reason = result
+        if status == "moved":
+            moved[team_name] += 1
+        else:
+            skipped.append({"discordId": str(member_id), "reason": reason})
 
     return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
 
@@ -841,41 +852,51 @@ async def handle_move_voice_channel_api(request: web.Request):
     auction_channel_ids = {int(ch) for ch in ch_role_map}
     auction_channel_ids.add(target_channel.id)
 
-    moved = 0
-    skipped = []
-    seen = set()
-    for member_id in member_ids:
-        if member_id in seen:
-            skipped.append({"discordId": str(member_id), "reason": "duplicate"})
-            continue
-        seen.add(member_id)
+    async def _move_one_fb(member_id):
         try:
             member = guild.get_member(member_id) or await guild.fetch_member(member_id)
         except Exception as e:
-            skipped.append({"discordId": str(member_id), "reason": str(e)})
-            continue
+            return ("skip", member_id, str(e))
         current = getattr(getattr(member, "voice", None), "channel", None)
         try:
             if current and current.id == target_channel.id:
-                moved += 1
+                pass  # 이미 목적 채널
             elif current and (current.id == lobby.id or current.id in auction_channel_ids):
                 await member.move_to(target_channel, reason="경매 결과 - 팀 음성채널 이동")
-                moved += 1
             else:
-                skipped.append({"discordId": str(member_id), "reason": "not_in_lobby"})
-                continue
+                return ("skip", member_id, "not_in_lobby")
         except discord.Forbidden:
-            skipped.append({"discordId": str(member_id), "reason": "missing_permission"})
-            continue
+            return ("skip", member_id, "missing_permission")
         except Exception as e:
-            skipped.append({"discordId": str(member_id), "reason": str(e)})
-            continue
+            return ("skip", member_id, str(e))
         if role:
             try:
                 if role not in member.roles:
                     await member.add_roles(role, reason="경매 결과 - 팀 역할 부여")
             except Exception as e:
                 asyncio.create_task(_send_discord_log(f"⚠️ 역할 지급 실패 ({member.display_name}): {e}"))
+        return ("moved", member_id, None)
+
+    seen = set()
+    tasks = []
+    skipped = []
+    for member_id in member_ids:
+        if member_id in seen:
+            skipped.append({"discordId": str(member_id), "reason": "duplicate"})
+            continue
+        seen.add(member_id)
+        tasks.append(_move_one_fb(member_id))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    moved = 0
+    for result in results:
+        if isinstance(result, Exception):
+            continue
+        status, member_id, reason = result
+        if status == "moved":
+            moved += 1
+        else:
+            skipped.append({"discordId": str(member_id), "reason": reason})
 
     return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
 
