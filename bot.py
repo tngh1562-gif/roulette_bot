@@ -796,6 +796,89 @@ async def handle_move_voice_teams_multi_api(request: web.Request):
 
     return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
 
+async def handle_move_voice_channel_api(request: web.Request):
+    """단일 팀 음성채널 이동 + 역할 부여 (fallback용)"""
+    if not BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "잘못된 요청입니다."}, status=400)
+    if str(data.get("secret", "")) != BOT_API_SECRET:
+        return web.json_response({"ok": False, "error": "인증 실패"}, status=403)
+
+    def clean_id(value):
+        text = re.sub(r"\D", "", str(value or ""))
+        return int(text) if text else 0
+
+    lobby_id = clean_id(data.get("lobbyChannelId"))
+    target_id = clean_id(data.get("targetChannelId"))
+    role_id = clean_id(data.get("roleId"))
+    member_ids = [clean_id(v) for v in (data.get("discordIds") or []) if clean_id(v)]
+
+    if not lobby_id or not target_id:
+        return web.json_response({"ok": False, "error": "lobbyChannelId / targetChannelId가 필요합니다."}, status=400)
+
+    try:
+        lobby = await fetch_discord_channel(lobby_id)
+        target_channel = await fetch_discord_channel(target_id)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"채널 조회 실패: {e}"}, status=400)
+    if not hasattr(lobby, "guild") or not hasattr(target_channel, "members"):
+        return web.json_response({"ok": False, "error": "채널이 음성채널이 아닙니다."}, status=400)
+
+    guild = lobby.guild
+    role = guild.get_role(role_id) if role_id else None
+
+    # 이전 경매 채널 목록도 허용 (재배치 가능)
+    async with _levels_lock:
+        level_data = _load_levels()
+        ch_role_map = level_data["settings"].setdefault("auction_team_channel_roles", {})
+        if role:
+            ch_role_map[str(target_channel.id)] = str(role.id)
+        _save_levels(level_data)
+
+    auction_channel_ids = {int(ch) for ch in ch_role_map}
+    auction_channel_ids.add(target_channel.id)
+
+    moved = 0
+    skipped = []
+    seen = set()
+    for member_id in member_ids:
+        if member_id in seen:
+            skipped.append({"discordId": str(member_id), "reason": "duplicate"})
+            continue
+        seen.add(member_id)
+        try:
+            member = guild.get_member(member_id) or await guild.fetch_member(member_id)
+        except Exception as e:
+            skipped.append({"discordId": str(member_id), "reason": str(e)})
+            continue
+        current = getattr(getattr(member, "voice", None), "channel", None)
+        try:
+            if current and current.id == target_channel.id:
+                moved += 1
+            elif current and (current.id == lobby.id or current.id in auction_channel_ids):
+                await member.move_to(target_channel, reason="경매 결과 - 팀 음성채널 이동")
+                moved += 1
+            else:
+                skipped.append({"discordId": str(member_id), "reason": "not_in_lobby"})
+                continue
+        except discord.Forbidden:
+            skipped.append({"discordId": str(member_id), "reason": "missing_permission"})
+            continue
+        except Exception as e:
+            skipped.append({"discordId": str(member_id), "reason": str(e)})
+            continue
+        if role:
+            try:
+                if role not in member.roles:
+                    await member.add_roles(role, reason="경매 결과 - 팀 역할 부여")
+            except Exception as e:
+                asyncio.create_task(_send_discord_log(f"⚠️ 역할 지급 실패 ({member.display_name}): {e}"))
+
+    return web.json_response({"ok": True, "moved": moved, "skipped": skipped})
+
 async def handle_bot_command_api(request: web.Request):
     if not BOT_API_SECRET:
         return web.json_response({"ok": False, "error": "BOT_API_SECRET이 설정되지 않았습니다."}, status=503)
@@ -1127,6 +1210,7 @@ async def start_bot_api():
     app.router.add_post("/api/bot-command", handle_bot_command_api)
     app.router.add_post("/api/move-voice-teams", handle_move_voice_teams_api)
     app.router.add_post("/api/move-voice-teams-multi", handle_move_voice_teams_multi_api)
+    app.router.add_post("/api/move-voice-channel", handle_move_voice_channel_api)
     app.router.add_post("/api/sync-announcements", handle_sync_announcements_api)
     app.router.add_get("/api/announcements", handle_get_announcements_api)
     bot_api_runner = web.AppRunner(app)
